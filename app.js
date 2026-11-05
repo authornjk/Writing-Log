@@ -42,7 +42,7 @@ function countWords(text){
 // data = { v, books:[{id,title,docId,link,goal}], activeId, booksAt,
 //          snapshots:{ docId:{ "YYYY-MM-DD":{count,at,m} } },   m = "api" (this app/nightly) or "import"
 //          sessions:{ id:{...} }, deleted:{ id:ts }, active:{...}|null, activeAt }
-function emptyData(){ return {v:1, books:[], activeId:null, booksAt:0, snapshots:{}, sessions:{}, deleted:{}, active:null, activeAt:0}; }
+function emptyData(){ return {v:1, books:[], activeId:null, booksAt:0, snapshots:{}, sessions:{}, deleted:{}, active:null, activeAt:0, goals:{}}; }
 function merge(a, b){
   a = a || emptyData(); b = b || emptyData();
   const out = emptyData();
@@ -58,6 +58,9 @@ function merge(a, b){
   for (const src of [a, b]) for (const [did, m] of Object.entries(src.snapshots || {})) {
     const o = out.snapshots[did] || (out.snapshots[did] = {});
     for (const [d, s] of Object.entries(m)) { if (!o[d] || (s.at||0) > (o[d].at||0)) o[d] = s; }
+  }
+  for (const src of [a, b]) for (const [d, g] of Object.entries(src.goals || {})) {
+    if (!out.goals[d] || (g.at||0) > (out.goals[d].at||0)) out.goals[d] = g;
   }
   return out;
 }
@@ -381,8 +384,9 @@ function renderCal(){
     let w = '<span class="w zero">0</span>';
     if (info.total > 0) w = '<span class="w num">'+short(info.total)+'</span>';
     else if (info.net != null && info.net < 0) w = '<span class="w neg num" title="Net change in the doc">'+short(info.net)+'</span>';
+    const gd = goalFor(s); const gmet = gd && goalDone(s, gd) >= gd.target;
     const dots = info.ss.slice(0,4).map(x => '<i class="'+(x.type==="sprint"?"s":x.type==="editing"?"e":"")+'"></i>').join("");
-    h += '<button type="button" class="'+cls.join(" ")+'" data-day="'+s+'" aria-label="'+parse(s).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})+', '+fmt(info.total)+' words"><span class="d">'+d+'</span>'+w+'<span class="dots">'+dots+'</span></button>';
+    h += '<button type="button" class="'+cls.join(" ")+'" data-day="'+s+'" aria-label="'+parse(s).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})+', '+fmt(info.total)+' words'+(gmet ? ', daily goal met' : '')+'"><span class="d">'+d+'</span>'+w+'<span class="dots">'+dots+'</span>'+(gmet ? '<span class="gm" aria-hidden="true">★</span>' : '')+'</button>';
   }
   $("cal").innerHTML = h;
   $("cal").querySelectorAll("[data-day]").forEach(b => b.onclick = () => { S.selected = b.dataset.day; S.pendingDel = null; renderCal(); renderPanel(); });
@@ -409,6 +413,9 @@ function renderPanel(){
     rows += '<div class="item"><span class="type '+esc(x.type)+'">'+esc(TYPE_NAME[x.type] || x.type)+'</span><span class="grow">'+esc(bits.join(" · "))+'</span>'+
       (x.words!=null && x.words!=="" ? '<span class="wds num">'+fmt(x.words)+'</span>' : '')+del+'</div>';
   });
+  const gd = goalFor(d);
+  if (gd){ const dn = goalDone(d, gd); const un = gd.unit === "pages" ? "pages" : "words";
+    rows = '<div class="item"><span class="type goal">Goal</span><span class="grow">'+fmt(gd.target)+' '+un+' · '+fmt(dn)+' done</span>'+(dn >= gd.target ? '<span class="wds" style="color:var(--gold)">★ Met</span>' : '')+'</div>' + rows; }
   if (!rows) rows = '<div class="item"><span class="grow">'+(isSun(d)?"Sunday rest day. You can still log something if you wrote.":"Nothing logged yet.")+'</span></div>';
   const f = S.form;
   p.innerHTML = '<div class="panel-head"><h3>'+esc(nice)+'</h3><span class="big num">'+fmt(info.total)+'</span><span class="label">words</span></div>'+
@@ -436,7 +443,48 @@ function renderTod(){
     return '<div class="bar'+(k===best?" best":"")+'"><span>'+v+'</span><span class="track"><span class="fill" style="width:'+(n? Math.max(4,a/max*100):0)+'%"></span></span><span class="v num">'+(n? fmt(Math.round(a))+' avg · '+n : '—')+'</span></div>'; }).join("")+
     '<p class="label" style="margin:4px 0 0">'+(used.length ? 'Average words per session · number of sessions' : 'Fills in as you log writing, editing and sprints')+'</p>';
 }
-function renderAll(){ renderTotals(); renderMs(); renderSprint(); renderCal(); renderPanel(); renderTod(); fillSettings(); }
+// ---------------- daily goal ----------------
+function goalFor(d){ const g = (S.data.goals || {})[d]; return g && !g.cleared && g.target > 0 ? g : null; }
+function goalDone(d, g){ return g.unit === "pages" ? (g.done || 0) : dayInfo(d).total; }
+function setGoal(d, g){ (S.data.goals || (S.data.goals = {}))[d] = Object.assign({}, g, {at: Date.now()}); save(); }
+function renderGoal(){
+  const box = $("goalBox"), btn = $("goalOpen"); const t = todayStr(); const g = goalFor(t); const f = S.goalForm;
+  btn.hidden = !!g || !!f;
+  if (f){
+    box.innerHTML = '<div class="goalform"><span class="label">Today\'s goal</span>'+
+      '<div class="seg" role="group" aria-label="Goal type">'+[["words","Words"],["pages","Pages"]].map(([k,v]) => '<button type="button" data-gunit="'+k+'" aria-pressed="'+(f.unit===k)+'">'+v+'</button>').join("")+'</div>'+
+      '<input class="inp num" id="goalNum" type="number" min="1" inputmode="numeric" aria-label="'+(f.unit==="pages"?"Pages":"Words")+'" placeholder="'+(f.unit==="pages"?"20":"1000")+'" value="'+esc(f.target)+'">'+
+      '<button class="btn teal sm" id="goalSet" type="button">Set goal</button>'+
+      '<button class="linkbtn" id="goalCancel" type="button">Cancel</button>'+
+      (g ? '<button class="linkbtn" id="goalRemove" type="button">Remove goal</button>' : '')+'</div>';
+    box.querySelectorAll("[data-gunit]").forEach(b => b.onclick = () => { f.target = $("goalNum").value; f.unit = b.dataset.gunit; renderGoal(); $("goalNum").focus(); });
+    $("goalNum").oninput = e => { f.target = e.target.value; };
+    $("goalNum").onkeydown = e => { if (e.key === "Enter") $("goalSet").click(); };
+    $("goalSet").onclick = () => {
+      const n = parseInt($("goalNum").value, 10); if (!n || n < 1){ $("goalNum").focus(); return; }
+      const prev = goalFor(t);
+      setGoal(t, {unit: f.unit, target: n, done: prev && prev.unit === f.unit ? (prev.done || 0) : 0});
+      lsSet("lastGoal", {unit: f.unit, target: n}); S.goalForm = null; renderAll();
+    };
+    $("goalCancel").onclick = () => { S.goalForm = null; renderGoal(); };
+    const rm = $("goalRemove"); if (rm) rm.onclick = () => { (S.data.goals || (S.data.goals = {}))[t] = {cleared: true, at: Date.now()}; save(); S.goalForm = null; renderAll(); };
+    return;
+  }
+  if (!g){ box.innerHTML = ""; return; }
+  const done = goalDone(t, g); const pct = Math.min(100, done / g.target * 100); const met = done >= g.target;
+  const unit = g.unit === "pages" ? (g.target === 1 ? "page" : "pages") : "words";
+  box.innerHTML = '<div class="dgoal'+(met ? " met" : "")+'"><div class="dtop">'+
+    '<span class="dlabel">Today\'s goal</span><span class="dnum num">'+fmt(done)+' / '+fmt(g.target)+' '+unit+'</span>'+
+    (met ? '<span class="dmet">Goal met! ♥</span>' : '<span class="dleft num">'+fmt(g.target - done)+' to go</span>')+
+    '<span class="dact">'+(g.unit === "pages" ? '<button class="tiny" id="pgMinus" type="button" aria-label="Take back a page"'+(done ? '' : ' disabled')+'>−</button><button class="tiny plus" id="pgPlus" type="button">+1 page</button>' : '')+
+    '<button class="linkbtn" id="goalEdit" type="button">Change</button></span></div>'+
+    '<div class="dtrack" role="progressbar" aria-label="Today\'s goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(pct)+'"><div class="dfill" style="width:'+pct.toFixed(1)+'%"></div></div></div>';
+  const plus = $("pgPlus"), minus = $("pgMinus");
+  if (plus) plus.onclick = () => { setGoal(t, Object.assign({}, g, {done: (g.done || 0) + 1})); renderGoal(); renderCal(); renderPanel(); };
+  if (minus) minus.onclick = () => { setGoal(t, Object.assign({}, g, {done: Math.max(0, (g.done || 0) - 1)})); renderGoal(); renderCal(); renderPanel(); };
+  $("goalEdit").onclick = () => { S.goalForm = {unit: g.unit, target: String(g.target)}; renderGoal(); };
+}
+function renderAll(){ renderGoal(); renderTotals(); renderMs(); renderSprint(); renderCal(); renderPanel(); renderTod(); fillSettings(); }
 
 // ---------------- sessions ----------------
 async function startSession(type, durationMin){
@@ -534,6 +582,7 @@ function wireSettings(){
   $("prevM").onclick = () => { S.view = new Date(S.view.getFullYear(), S.view.getMonth()-1, 1); renderCal(); };
   $("nextM").onclick = () => { S.view = new Date(S.view.getFullYear(), S.view.getMonth()+1, 1); renderCal(); };
   $("syncBtn").onclick = () => syncNow();
+  $("goalOpen").onclick = () => { const last = lsGet("lastGoal") || {unit: "words", target: ""}; S.goalForm = {unit: last.unit, target: last.target ? String(last.target) : ""}; renderGoal(); const i = $("goalNum"); if (i){ i.focus(); i.select(); } };
 }
 
 // ---------------- boot ----------------

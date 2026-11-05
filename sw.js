@@ -1,5 +1,5 @@
 // Keeps the app's own files available offline. Google calls always go to the network.
-const CACHE = "writing-log-v6";
+const CACHE = "writing-log-v7";
 const SHELL = ["./", "index.html", "app.js", "config.js", "logo.png", "manifest.webmanifest", "icon-192.png", "apple-touch-icon.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

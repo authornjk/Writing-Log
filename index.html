@@ -190,6 +190,29 @@ details.settings .form{margin-top:10px}
 
 
 body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
+.goalbtn{margin-left:auto;border:1px dashed var(--line);background:none;border-radius:999px;padding:0 9px;font-size:11.5px;line-height:20px;color:var(--muted);font-weight:600}
+.goalbtn:hover{border-color:var(--gold);color:var(--gold)}
+#goalBox:empty{display:none}
+.goalform{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.goalform .seg button{padding:3px 11px;font-size:12px}
+.goalform .inp{width:96px;padding:5px 8px}
+.dgoal{margin-top:8px;padding:7px 10px 9px;border-radius:10px;background:var(--gold-soft);border:1px solid var(--gold-soft);display:flex;flex-direction:column;gap:5px}
+.dgoal.met{border-color:var(--gold)}
+.dgoal .dtop{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:12.5px}
+.dgoal .dlabel{font-family:var(--f-label);text-transform:uppercase;letter-spacing:.12em;font-size:10.5px;font-weight:600;color:var(--gold)}
+.dgoal .dnum{font-weight:600}
+.dgoal .dleft{color:var(--muted)}
+.dgoal .dmet{color:var(--gold);font-weight:700}
+.dgoal .dact{margin-left:auto;display:flex;align-items:center;gap:6px}
+.dgoal .tiny{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:0 9px;font-size:12px;font-weight:600;line-height:22px;min-width:26px}
+.dgoal .tiny.plus{border-color:var(--gold);color:var(--gold)}
+.dgoal .tiny:disabled{opacity:.4;cursor:default}
+.dgoal .dtrack{height:10px;border-radius:5px;background:var(--surface);overflow:hidden}
+.dgoal .dfill{display:block;height:100%;border-radius:5px;background:repeating-linear-gradient(-45deg,var(--gold) 0 8px,#E9A23B 8px 16px)}
+@media (prefers-reduced-motion:no-preference){.dgoal .dfill{transition:width .5s ease}}
+.day{position:relative}
+.day .gm{position:absolute;top:3px;right:5px;font-size:10px;line-height:1;color:var(--gold)}
+.item .type.goal{background:transparent;border:1px solid var(--gold);color:var(--gold)}
 .signin{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 .gbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:7px 14px;font-weight:600;font-size:14px}
 .gbtn svg{width:16px;height:16px}
@@ -212,7 +235,9 @@ body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
     <div class="streak" style="margin-top:4px">
       <span><span class="heart">♥</span> Current streak: <strong class="num" id="sCur">0 days</strong></span>
       <span>Longest writing streak: <strong class="num" id="sLong">0 days</strong></span>
+      <button class="goalbtn" id="goalOpen" type="button">+ Daily goal</button>
     </div>
+    <div id="goalBox"></div>
   </section>
 
   <div id="authBar" class="note" hidden></div>
@@ -241,6 +266,7 @@ body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
       <span><i style="background:var(--coral)"></i>Sprint</span>
       <span><i style="background:var(--gold)"></i>Writing</span>
       <span><i style="background:var(--teal)"></i>Editing</span>
+      <span><b style="color:var(--gold);font-size:11px">★</b>Daily goal met</span>
       <span><i style="background:var(--sun);border:1px solid var(--line)"></i>Sunday (rest day, never breaks a streak)</span>
     </div>
   </section>
