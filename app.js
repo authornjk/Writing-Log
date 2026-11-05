@@ -78,9 +78,7 @@ function allDates(){ const s = new Set(); Object.values(S.data.snapshots).forEac
 function deltaFor(did, d){
   const m = S.data.snapshots[did]; if (!m || !m[d]) return null;
   const ds = docDates(did); const i = ds.indexOf(d); if (i <= 0) return null;
-  const p = m[ds[i-1]];
-  if ((p.m || "api") !== (m[d].m || "api")) return null; // different counting method: start fresh
-  return m[d].count - p.count;
+  return m[d].count - m[ds[i-1]].count;
 }
 function latestCount(did){
   if (S.counts[did]) return S.counts[did].n;
@@ -551,9 +549,11 @@ async function boot(){
   if (S.dirty) flush();
   syncNow();
 }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Auth.token()){ pull(); if (!S.data.active && S.counts && Date.now() - Math.max(0, ...Object.values(S.counts).map(c => c.at)) > 10*60000) syncNow(); } });
+const lastRead = () => Math.max(0, ...Object.values(S.counts).map(c => c.at));
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Auth.token()){ pull().then(() => { if (Date.now() - lastRead() > 30000) syncNow(); }); } });
+window.addEventListener("pageshow", e => { if (e.persisted && Auth.token()) pull().then(() => syncNow()); });
 window.addEventListener("online", () => flush());
-setInterval(() => { if (document.visibilityState === "visible" && Auth.token() && !S.saving) pull(); }, 60000);
+setInterval(() => { if (document.visibilityState === "visible" && Auth.token() && !S.saving){ pull().then(() => { if (Date.now() - lastRead() > 3*60000) syncNow(); }); } }, 60000);
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
 boot();
 })();
