@@ -139,6 +139,13 @@ const Auth = {
   signOut(){ const t = lsGet("token"); lsDel("token"); lsDel("fileId"); lsDel("email");
     if (t) fetch("https://oauth2.googleapis.com/revoke?token="+encodeURIComponent(t.v), {method:"POST"}).catch(()=>{}); }
 };
+// Quietly get a fresh sign-in (Google ends each one after an hour). The page reloads for a moment and picks up where it was.
+function renew(){
+  const tried = lsGet("silentAt");
+  if (!CLIENT_ID || (tried && Date.now() - tried < 20000)){ showAuth("expired"); return; }
+  lsSet("silentAt", Date.now()); Auth.go(true);
+}
+function tokenLeft(){ const t = lsGet("token"); return t ? t.exp - Date.now() : 0; }
 async function gfetch(url, opts){
   const tok = Auth.token(); if (!tok) throw {code:"auth"};
   const r = await fetch(url, Object.assign({}, opts, {headers: Object.assign({Authorization: "Bearer "+tok}, (opts && opts.headers) || {})}));
@@ -185,19 +192,19 @@ async function pull(){
 }
 let saveTimer = null;
 function save(now){
-  lsSet("data", S.data); S.dirty = true;
+  lsSet("data", S.data); S.dirty = true; lsSet("dirty", true);
   clearTimeout(saveTimer); saveTimer = setTimeout(flush, now ? 0 : 700);
 }
 async function flush(){
   if (!S.dirty || S.saving || !Auth.token()) return;
   S.saving = true; S.dirty = false;
-  try { const remote = await readRemote(); S.data = merge(remote, S.data); lsSet("data", S.data); await writeRemote(S.data); S.online = true; S.savedAt = Date.now(); lsSet("savedAt", S.savedAt); }
+  try { const remote = await readRemote(); S.data = merge(remote, S.data); lsSet("data", S.data); await writeRemote(S.data); S.online = true; S.savedAt = Date.now(); lsSet("savedAt", S.savedAt); if (!S.dirty) lsDel("dirty"); }
   catch(e){ S.dirty = true; handleErr(e); }
   S.saving = false; if (S.dirty) { clearTimeout(saveTimer); saveTimer = setTimeout(flush, 4000); }
   renderAll();
 }
 function handleErr(e){
-  if (e && e.code === "auth") showAuth("expired");
+  if (e && e.code === "auth"){ if (!S.data.active) renew(); else showAuth("expired"); }
   else if (e && e.code === "scope") showAuth("scope");
   else if (e && e.code === "forbidden") { S.driveErr = {text: "Google refused to save your log"+(e.message ? " ("+e.message+")" : "")+". Try signing out and back in under Manuscript settings.", retry:true}; renderMs(); }
   else { S.driveErr = {text: "Couldn't reach Google just now. Your changes are kept on this device and will save when you're back online.", retry:true}; renderMs(); }
@@ -237,7 +244,7 @@ async function syncNow(){
   let changed = false;
   for (const b of books()){
     try { const n = await readCount(b.docId); if (recordToday(n, b.docId)) changed = true; }
-    catch(e){ if (e.code === "auth"){ showAuth("expired"); break; } if (!S.driveErr) S.driveErr = docErr(e, books().length > 1 ? b : null); }
+    catch(e){ if (e.code === "auth"){ if (!S.data.active) renew(); else showAuth("expired"); break; } if (!S.driveErr) S.driveErr = docErr(e, books().length > 1 ? b : null); }
   }
   S.syncing = false; if (changed) save(); renderAll();
 }
@@ -434,18 +441,20 @@ function renderAll(){ renderTotals(); renderMs(); renderSprint(); renderCal(); r
 // ---------------- sessions ----------------
 async function startSession(type, durationMin){
   const ab = activeBook(); if (S.busy || !ab) return;
+  if (tokenLeft() < 5*60000){ lsSet("pendingStart", {type, durationMin: durationMin || null}); renew(); return; }
   S.busy = true; S.driveErr = null; renderSprint();
   try {
     const n = await readCount(ab.docId); recordToday(n, ab.docId);
     S.data.active = {type, durationMin: durationMin || null, start: Date.now(), startCount: n, docId: ab.docId, bookId: ab.id, bookTitle: ab.title, timeOfDay: todFor(new Date())};
     S.data.activeAt = Date.now(); S.picking = false; save(true);
-  } catch(e){ silence(true); if (e.code === "auth") showAuth("expired"); else S.driveErr = docErr(e, ab); }
+  } catch(e){ silence(true); if (e.code === "auth"){ lsSet("pendingStart", {type, durationMin: durationMin || null}); renew(); } else S.driveErr = docErr(e, ab); }
   S.busy = false; renderAll();
 }
 async function stopSession(){
   if (S.busy || !S.data.active) return; silence(true); S.busy = true; S.driveErr = null; renderSprint();
+  if (!Auth.token()){ lsSet("pendingStop", true); S.busy = false; renew(); return; }
   try { const n = await readCount(S.data.active.docId); finishSession(n, null); }
-  catch(e){ if (e.code === "auth") showAuth("expired"); else S.driveErr = docErr(e); S.stopManual = true; }
+  catch(e){ if (e.code === "auth"){ lsSet("pendingStop", true); S.busy = false; renew(); return; } S.driveErr = docErr(e); S.stopManual = true; }
   S.busy = false; renderAll();
 }
 function finishSession(endCount, manualWords){
@@ -540,20 +549,26 @@ async function boot(){
     if (back && back.error){ showAuth(back.silent ? "signin" : "denied"); return; }
     // Try a quiet sign-in once per launch unless a session is running (it survives the reload, but the alarm would not).
     const tried = lsGet("silentAt");
-    if (lsGet("everSigned") && !S.data.active && (!tried || Date.now() - tried > 20000)){ lsSet("silentAt", Date.now()); Auth.go(true); return; }
-    showAuth(S.data.active ? "expired" : "signin"); return;
+    if (lsGet("everSigned") && (!tried || Date.now() - tried > 20000)){ lsSet("silentAt", Date.now()); Auth.go(true); return; }
+    showAuth(lsGet("everSigned") ? "expired" : "signin"); return;
   }
   lsSet("everSigned", true); hideAuth();
   if (!lsGet("email")) fetchEmail();
   await pull();
-  if (S.dirty) flush();
+  if (lsGet("dirty")){ S.dirty = true; flush(); }
+  const ps = lsGet("pendingStop"), pst = lsGet("pendingStart"); lsDel("pendingStop"); lsDel("pendingStart");
+  if (ps && S.data.active) await stopSession();
+  else if (pst && !S.data.active) await startSession(pst.type, pst.durationMin);
   syncNow();
 }
+// Renew the sign-in when coming back to the app with it expired (not in the middle of a session).
+function checkToken(){ if (!CLIENT_ID || !lsGet("everSigned")) return; if (!Auth.token() && !S.data.active && document.visibilityState === "visible") renew(); }
+document.addEventListener("visibilitychange", checkToken);
 const lastRead = () => Math.max(0, ...Object.values(S.counts).map(c => c.at));
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Auth.token()){ pull().then(() => { if (Date.now() - lastRead() > 30000) syncNow(); }); } });
 window.addEventListener("pageshow", e => { if (e.persisted && Auth.token()) pull().then(() => syncNow()); });
 window.addEventListener("online", () => flush());
-setInterval(() => { if (document.visibilityState === "visible" && Auth.token() && !S.saving){ pull().then(() => { if (Date.now() - lastRead() > 3*60000) syncNow(); }); } }, 60000);
+setInterval(() => { checkToken(); if (document.visibilityState === "visible" && Auth.token() && !S.saving){ pull().then(() => { if (Date.now() - lastRead() > 3*60000) syncNow(); }); } }, 60000);
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
 boot();
 })();
