@@ -1,7 +1,7 @@
 /**
  * Writing Log — nightly word count.
- * Records each book's word count into "Writing Log data.json" in your Google Drive,
- * so days you don't open the app still get counted.
+ * Right after midnight, records each book's word count into "Writing Log data.json" in your
+ * Google Drive as the day that just ended, so days you don't open the app still get counted.
  * Setup: paste this into a new project at script.google.com, run setup() once, and allow access.
  */
 const FILE_NAME = 'Writing Log data.json';
@@ -9,8 +9,7 @@ const TIME_ZONE = 'America/Denver';
 
 function setup() {
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('recordNightly').timeBased().everyDays(1).atHour(23).nearMinute(40).inTimezone(TIME_ZONE).create();
-  recordNightly();
+  ScriptApp.newTrigger('recordNightly').timeBased().everyDays(1).atHour(0).nearMinute(5).inTimezone(TIME_ZONE).create();
 }
 
 function recordNightly() {
@@ -18,7 +17,8 @@ function recordNightly() {
   if (!files.hasNext()) return;
   const file = files.next();
   const data = JSON.parse(file.getBlob().getDataAsString());
-  const date = Utilities.formatDate(new Date(), TIME_ZONE, 'yyyy-MM-dd');
+  // Runs just after midnight, so the count belongs to the day that just ended.
+  const date = Utilities.formatDate(new Date(Date.now() - 2 * 60 * 60 * 1000), TIME_ZONE, 'yyyy-MM-dd');
   data.snapshots = data.snapshots || {};
   let changed = false;
   (data.books || []).forEach(function (b) {
