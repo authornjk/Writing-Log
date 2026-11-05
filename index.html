@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Writing Log</title>
+<meta name="description" content="Nicole J Kimzey's daily word counts, sprints and streaks.">
+<meta name="theme-color" content="#F5F8F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1918" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Writing Log">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gilda+Display&family=Figtree:wght@400;500;600;700&family=Josefin+Sans:wght@500;600&display=swap">
+<style>
+html{-webkit-text-size-adjust:100%}
+[hidden]{display:none!important}
+img{max-width:100%}
+body{margin:0}
+
+/* Layout: one calm column — brand plate, totals, sprint card, month calendar with an expanding day panel, time-of-day bars */
+:root{
+  --paper:#F5F8F7; --surface:#FFFFFF; --ink:#1D2B2A; --muted:#5B6D6A; --line:#DAE3E1;
+  --coral:#EE5A4C; --coral-soft:#FDE9E6; --teal:#1B6E69; --teal-soft:#E2F1EF; --gold:#D98A1E; --gold-soft:#FBF0DD;
+  --sun:#ECEFEE; --sun-ink:#97A5A2; --plate:#FFFFFF;
+  --f-display:"Gilda Display", Georgia, "Times New Roman", serif;
+  --f-body:"Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-label:"Josefin Sans", "Figtree", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0F1918; --surface:#162322; --ink:#E7EFED; --muted:#93A6A2; --line:#283A38;
+  --coral:#FF7A6C; --coral-soft:#3A2220; --teal:#5CC4BC; --teal-soft:#16312F; --gold:#F2B04E; --gold-soft:#33291A;
+  --sun:#121D1C; --sun-ink:#5E706D; --plate:#FBFAF7; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --paper:#0F1918; --surface:#162322; --ink:#E7EFED; --muted:#93A6A2; --line:#283A38;
+  --coral:#FF7A6C; --coral-soft:#3A2220; --teal:#5CC4BC; --teal-soft:#16312F; --gold:#F2B04E; --gold-soft:#33291A;
+  --sun:#121D1C; --sun-ink:#5E706D; --plate:#FBFAF7; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:12px 48px}
+.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.num{font-variant-numeric:tabular-nums}
+.label{font-family:var(--f-label);text-transform:uppercase;letter-spacing:.14em;font-size:11.5px;font-weight:600;color:var(--muted)}
+
+.plate{background:var(--plate);border-radius:14px;padding:10px 16px 8px;display:flex;flex-direction:column;align-items:center;gap:3px;border:1px solid var(--line)}
+.plate img{width:min(100%,360px);height:auto;display:block}
+.plate .label{font-size:10px;letter-spacing:.2em}
+.plate .label{color:#1B6E69}
+
+.totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.tot{display:flex;flex-direction:column;gap:0;padding:0 2px}
+.tot b{font-family:var(--f-display);font-weight:400;font-size:21px;line-height:1.1;color:var(--ink)}
+.tot .label{font-size:10px;letter-spacing:.12em}
+.tot.week b{color:var(--teal)} .tot.month b{color:var(--coral)}
+.streak{display:flex;flex-wrap:wrap;gap:2px 14px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:5px}
+.streak strong{color:var(--ink);font-weight:600}
+.streak .heart{color:var(--coral)}
+
+.ms{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;font-size:14px}
+.ms .title{font-family:var(--f-display);font-size:19px}
+.ms .meta{color:var(--muted);font-size:13px}
+.ms .spacer{flex:1}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;font-weight:600;font-size:13.5px}
+.btn:hover{border-color:var(--teal)}
+.btn.primary{background:var(--coral);border-color:var(--coral);color:#fff}
+.btn.teal{background:var(--teal);border-color:var(--teal);color:var(--surface)}
+.btn:disabled{opacity:.55;cursor:default}
+.linkbtn{background:none;border:0;padding:0;color:var(--teal);font-weight:600;font-size:13px;text-decoration:underline;text-underline-offset:3px}
+.note{font-size:13px;padding:10px 12px;border-radius:10px;background:var(--gold-soft);color:var(--ink);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.note.err{background:var(--coral-soft)}
+
+.sprint{display:flex;flex-direction:column;gap:8px}
+.sprint.on,.sprint.picking,.sprint.ring{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.sprint.on{border-color:var(--coral);box-shadow:0 0 0 3px var(--coral-soft)}
+.sprint-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.sprint h2{margin:0;font-family:var(--f-display);font-weight:400;font-size:22px}
+.timer{font-family:var(--f-display);font-size:34px;line-height:1;color:var(--coral)}
+.sprint .meta{color:var(--muted);font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:transparent;border-radius:999px;padding:4px 10px;font-size:12.5px}
+.chip[aria-pressed="true"]{background:var(--teal-soft);border-color:var(--teal);color:var(--teal);font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:6px 14px;font-size:13px;font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+
+.cal-head{display:flex;align-items:center;gap:10px}
+.cal-head h2{margin:0;font-family:var(--f-display);font-weight:400;font-size:24px;flex:1}
+.navbtn{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--surface);font-size:16px;line-height:1}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+.dow{text-align:center;padding-bottom:2px}
+.day{min-height:64px;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:6px 6px 5px;display:flex;flex-direction:column;justify-content:space-between;text-align:left;min-width:0}
+.day .d{font-size:12px;color:var(--muted);font-weight:600}
+.day .w{font-size:14px;font-weight:700;color:var(--teal);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.day .w.neg{color:var(--muted);font-weight:500;font-size:12px}
+.day .w.zero{visibility:hidden}
+.day .dots{display:flex;gap:3px;min-height:6px}
+.day .dots i{width:6px;height:6px;border-radius:50%;background:var(--gold)}
+.day .dots i.s{background:var(--coral)}
+.day .dots i.e{background:var(--teal)}
+.day.sun{background:var(--sun);border-color:transparent}
+.day.sun .d{color:var(--sun-ink)} .day.sun .w{color:var(--sun-ink)}
+.day.out{visibility:hidden}
+.day.today{border-color:var(--coral);border-width:2px;padding:5px 5px 4px}
+.day.sel{background:var(--teal-soft);border-color:var(--teal)}
+.day.hit:not(.sun){background:linear-gradient(var(--surface),var(--surface)) padding-box}
+.day.future .d{opacity:.5}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.panel-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px}
+.panel-head h3{margin:0;font-family:var(--f-display);font-weight:400;font-size:21px;flex:1;min-width:0}
+.panel-head .big{font-family:var(--f-display);font-size:26px;color:var(--teal)}
+.list{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.item{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.item .type{font-family:var(--f-label);font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;padding:3px 8px 2px;border-radius:6px;background:var(--gold-soft);color:var(--gold)}
+.item .type.sprint{background:var(--coral-soft);color:var(--coral)}
+.item .type.editing{background:var(--teal-soft);color:var(--teal)}
+.item .type.doc{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.item .grow{flex:1;min-width:0;color:var(--muted);font-size:13px}
+.item .wds{font-weight:700}
+.x{border:0;background:none;color:var(--muted);font-size:13px;text-decoration:underline;padding:0}
+.form{display:flex;flex-direction:column;gap:10px;padding-top:4px}
+.form .row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.inp{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:10px;padding:8px 10px;font:inherit;width:140px;max-width:100%}
+.inp.wide{width:100%}
+.check{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--muted)}
+.check input{margin-top:3px}
+
+.tod{display:flex;flex-direction:column;gap:8px}
+.bar{display:grid;grid-template-columns:120px minmax(0,1fr) 92px;align-items:center;gap:10px;font-size:13px}
+.bar .track{height:10px;border-radius:5px;background:var(--line);overflow:hidden}
+.bar .fill{height:100%;background:var(--teal);border-radius:5px}
+.bar.best .fill{background:var(--coral)}
+.bar .v{text-align:right;color:var(--muted)}
+section h2.sec{margin:0 0 10px;font-family:var(--f-display);font-weight:400;font-size:22px}
+.goal{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.gtrack{height:12px;border-radius:6px;background:var(--line);overflow:hidden}
+.gfill{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--teal),var(--coral))}
+.goal .grow2{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted)}
+.goal .grow2 b{color:var(--ink);font-weight:600}
+.books{display:flex;flex-direction:column;gap:5px;margin-top:4px}
+.book{display:grid;grid-template-columns:minmax(0,8.5em) minmax(0,1fr) auto;align-items:center;gap:8px;font-size:12.5px}
+.book .btitle{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.book .bmeta{color:var(--muted);white-space:nowrap}
+.book .bmeta b{color:var(--ink);font-weight:600}
+.book .gtrack{height:6px;border-radius:3px}
+.books-head{display:flex;align-items:center;gap:8px}
+.books-head .when{font-size:11.5px;color:var(--muted);flex:1;text-align:right}
+.btn.sm{padding:2px 10px;font-size:12px}
+.book.done .gfill{background:var(--gold)}
+.pick{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.booksel{appearance:none;-webkit-appearance:none;border:0;border-bottom:1.5px dashed var(--line);background:transparent;color:var(--ink);font-family:var(--f-body);font-weight:600;font-size:13.5px;padding:0 20px 1px 0;max-width:100%;
+  background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 9px) 55%,calc(100% - 4px) 55%;background-size:5px 5px;background-repeat:no-repeat;cursor:pointer}
+.booksel:hover{border-bottom-color:var(--teal)}
+.booktitle{font-weight:600;font-size:13.5px}
+.sel{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:10px;padding:8px 10px;font:inherit;max-width:100%}
+.subform{border-top:1px solid var(--line);padding-top:12px;margin-top:4px}
+details.settings summary{cursor:pointer;color:var(--muted);font-size:13px}
+details.settings .form{margin-top:10px}
+@media (max-width:480px){
+  .plate img{width:min(100%,280px)}
+  .day{min-height:48px;padding:4px 4px 3px;border-radius:8px}
+  .day.today{padding:3px 3px 2px}
+  .day .w{font-size:12px}
+  .cal{gap:3px}
+  .bar{grid-template-columns:96px minmax(0,1fr) 78px}
+}
+.idle{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.modes{display:flex;gap:6px;margin-left:auto}
+.mode{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 10px;display:flex;align-items:center;gap:5px;font-size:13px;font-weight:600;white-space:nowrap;flex:none}
+.mode i{width:7px;height:7px;border-radius:50%;display:block;flex:none}
+.mode.writing i{background:var(--gold)} .mode.editing i{background:var(--teal)} .mode.sprint i{background:var(--coral)}
+.mode.writing:hover{border-color:var(--gold)} .mode.editing:hover{border-color:var(--teal)} .mode.sprint:hover{border-color:var(--coral)}
+.mode:disabled{opacity:.55;cursor:default}
+.sprint.on.t-writing{border-color:var(--gold);box-shadow:0 0 0 3px var(--gold-soft)}
+.sprint.on.t-editing{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-soft)}
+.t-writing .timer{color:var(--gold)} .t-editing .timer{color:var(--teal)}
+.sprint.ring{border-color:var(--coral);background:var(--coral-soft)}
+@media (prefers-reduced-motion:no-preference){.sprint.on .timer{animation:pulse 2s ease-in-out infinite}.sprint.ring .timer{animation:pulse .7s ease-in-out infinite}}
+@keyframes pulse{50%{opacity:.75}}
+
+
+body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
+.signin{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.gbtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:7px 14px;font-weight:600;font-size:14px}
+.gbtn svg{width:16px;height:16px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="plate">
+    <img src="logo.png" alt="Nicole J Kimzey, contemporary romcom author" width="900" height="179">
+    <span class="label">Writing Log</span>
+  </header>
+
+  <section aria-label="Totals">
+    <div class="totals">
+      <div class="tot"><span class="label">Today</span><b class="num" id="tToday">—</b></div>
+      <div class="tot week"><span class="label">This week</span><b class="num" id="tWeek">—</b></div>
+      <div class="tot month"><span class="label" id="tMonthLabel">This month</span><b class="num" id="tMonth">—</b></div>
+    </div>
+    <div class="streak" style="margin-top:4px">
+      <span><span class="heart">♥</span> Current streak: <strong class="num" id="sCur">0 days</strong></span>
+      <span>Longest writing streak: <strong class="num" id="sLong">0 days</strong></span>
+    </div>
+  </section>
+
+  <div id="authBar" class="note" hidden></div>
+  <div id="loadNote" class="note" hidden></div>
+
+  <section aria-label="Your books">
+    <div class="books-head">
+      <span class="label">Your books</span>
+      <span class="when num" id="booksWhen"></span>
+      <button class="btn sm" id="syncBtn" type="button">Update</button>
+    </div>
+    <div class="books" id="bookList"></div>
+  </section>
+  <div id="driveNote" class="note err" hidden></div>
+
+  <section class="sprint" id="sprintCard" aria-label="Start a session"></section>
+
+  <section aria-label="Calendar">
+    <div class="cal-head">
+      <button class="navbtn" id="prevM" type="button" aria-label="Previous month">‹</button>
+      <h2 id="calTitle">November 2026</h2>
+      <button class="navbtn" id="nextM" type="button" aria-label="Next month">›</button>
+    </div>
+    <div class="cal" id="cal" style="margin-top:10px"></div>
+    <div class="legend" style="margin-top:10px">
+      <span><i style="background:var(--coral)"></i>Sprint</span>
+      <span><i style="background:var(--gold)"></i>Writing</span>
+      <span><i style="background:var(--teal)"></i>Editing</span>
+      <span><i style="background:var(--sun);border:1px solid var(--line)"></i>Sunday (rest day, never breaks a streak)</span>
+    </div>
+  </section>
+
+  <section class="panel" id="panel" aria-live="polite"></section>
+
+  <section aria-label="Time of day">
+    <h2 class="sec">When you write best</h2>
+    <div class="tod" id="tod"></div>
+  </section>
+
+  <details class="settings">
+    <summary>Manuscript settings</summary>
+    <div class="form">
+      <div id="bookPick" class="row" hidden><label class="label" for="setBook">Edit book</label><select class="sel" id="setBook"></select></div>
+      <label class="label" for="setTitle">Book title</label>
+      <input class="inp wide" id="setTitle" type="text" >
+      <label class="label" for="setLink">Google Doc link</label>
+      <input class="inp wide" id="setLink" type="url" placeholder="https://docs.google.com/document/d/…">
+      <label class="label" for="setGoal">Word goal</label>
+      <input class="inp num" id="setGoal" type="number" min="1" inputmode="numeric" placeholder="80000">
+      <p class="meta" style="margin:0;font-size:13px;color:var(--muted)">Everything from a chapter titled Acknowledgements or Dark Matter onward is left out of the count.</p>
+      <div class="row"><button class="btn teal" id="saveSet" type="button">Save</button><span id="setMsg" style="font-size:13px;color:var(--muted)"></span></div>
+      <div class="subform">
+        <button class="btn" id="addOpen" type="button">Add a book</button>
+        <div class="form" id="addForm" hidden>
+          <label class="label" for="addTitle">New book title</label>
+          <input class="inp wide" id="addTitle" type="text">
+          <label class="label" for="addLink">Google Doc link</label>
+          <input class="inp wide" id="addLink" type="url" placeholder="https://docs.google.com/document/d/…">
+          <label class="label" for="addGoal">Word goal</label>
+          <input class="inp num" id="addGoal" type="number" min="1" inputmode="numeric" placeholder="80000">
+          <p style="margin:0;font-size:13px;color:var(--muted)">The new book shows up with its own progress bar at the top. Its first word count is its starting point, so the words already in it never count as writing for that day.</p>
+          <div class="row"><button class="btn teal" id="addSave" type="button">Add</button><button class="linkbtn" id="addCancel" type="button">Cancel</button><span id="addMsg" style="font-size:13px;color:var(--muted)"></span></div>
+        </div>
+      </div>
+      <div class="subform form">
+        <span class="label">Bring in history</span>
+        <p style="margin:0;font-size:13px;color:var(--muted)">Choose the import file Claude made for you. Your days, books and goals are added to this log. Anything already here stays.</p>
+        <div class="row"><input id="importFile" type="file" accept="application/json,.json"><span id="importMsg" style="font-size:13px;color:var(--muted)"></span></div>
+      </div>
+      <div class="subform row"><span id="acctMsg" style="font-size:13px;color:var(--muted);flex:1"></span><button class="linkbtn" id="signOut" type="button">Sign out of Google</button></div>
+    </div>
+  </details>
+</div>
+
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
