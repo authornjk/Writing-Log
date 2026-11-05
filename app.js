@@ -123,7 +123,7 @@ const Auth = {
     lsSet("authState", {state, silent: !!silent, at: Date.now()});
     const p = new URLSearchParams({client_id: CLIENT_ID, redirect_uri: this.redirectUri(), response_type: "token", scope: SCOPES,
       include_granted_scopes: "true", state});
-    if (silent) p.set("prompt", "none");
+    if (silent) p.set("prompt", "none"); else p.set("prompt", "consent");
     const hint = lsGet("email"); if (hint) p.set("login_hint", hint);
     location.assign("https://accounts.google.com/o/oauth2/v2/auth?" + p.toString());
   },
@@ -145,7 +145,9 @@ async function gfetch(url, opts){
   const tok = Auth.token(); if (!tok) throw {code:"auth"};
   const r = await fetch(url, Object.assign({}, opts, {headers: Object.assign({Authorization: "Bearer "+tok}, (opts && opts.headers) || {})}));
   if (r.status === 401){ lsDel("token"); throw {code:"auth"}; }
-  if (r.status === 403 || r.status === 404) { let msg = ""; try { msg = (await r.json()).error.message; } catch(_){} throw {code: r.status === 404 ? "notfound" : "forbidden", message: msg}; }
+  if (r.status === 403 || r.status === 404) { let msg = "", reason = ""; try { const j = await r.json(); msg = j.error.message || ""; reason = ((j.error.errors||[])[0]||{}).reason || (j.error.status||""); } catch(_){}
+    if (/insufficient|scope|PERMISSION_DENIED/i.test(reason + " " + msg) && !/does not have permission|not found/i.test(msg) && r.status === 403) throw {code:"scope", message: msg};
+    throw {code: r.status === 404 ? "notfound" : "forbidden", message: msg}; }
   if (!r.ok) throw {code:"net", status:r.status};
   return r;
 }
@@ -178,7 +180,8 @@ async function writeRemote(obj){
 }
 async function pull(){
   if (!Auth.token()) return;
-  try { const remote = await readRemote(); S.data = merge(S.data, remote); lsSet("data", S.data); S.online = true; S.loadErr = null; }
+  try { const remote = await readRemote(); S.data = merge(S.data, remote); lsSet("data", S.data); S.online = true; S.loadErr = null;
+    if (!S.fileId && books().length) save(true); }
   catch(e){ handleErr(e); }
   renderAll();
 }
@@ -190,13 +193,15 @@ function save(now){
 async function flush(){
   if (!S.dirty || S.saving || !Auth.token()) return;
   S.saving = true; S.dirty = false;
-  try { const remote = await readRemote(); S.data = merge(remote, S.data); lsSet("data", S.data); await writeRemote(S.data); S.online = true; }
+  try { const remote = await readRemote(); S.data = merge(remote, S.data); lsSet("data", S.data); await writeRemote(S.data); S.online = true; S.savedAt = Date.now(); lsSet("savedAt", S.savedAt); }
   catch(e){ S.dirty = true; handleErr(e); }
   S.saving = false; if (S.dirty) { clearTimeout(saveTimer); saveTimer = setTimeout(flush, 4000); }
   renderAll();
 }
 function handleErr(e){
   if (e && e.code === "auth") showAuth("expired");
+  else if (e && e.code === "scope") showAuth("scope");
+  else if (e && e.code === "forbidden") { S.driveErr = {text: "Google refused to save your log"+(e.message ? " ("+e.message+")" : "")+". Try signing out and back in under Manuscript settings.", retry:true}; renderMs(); }
   else { S.driveErr = {text: "Couldn't reach Google just now. Your changes are kept on this device and will save when you're back online.", retry:true}; renderMs(); }
 }
 
@@ -244,7 +249,7 @@ function showAuth(kind){
   const n = $("authBar"); n.hidden = false; n.className = "note signin";
   const g = '<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.8 6C12.3 13.4 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.2.8-4.7l-7.8-6C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.7l7.8-6z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.3 0-11.7-3.9-13.6-9.4l-7.8 6C6.6 42.6 14.6 48 24 48z"/></svg>';
   if (kind === "setup"){ n.innerHTML = "This app isn't connected to Google yet. Add your Google client ID to config.js, then reload."; return; }
-  const msg = kind === "expired" ? "Your Google sign-in timed out. Your log is still here." : kind === "denied" ? "Google sign-in was cancelled. The app needs it to read your docs and save your log." : "Sign in with Google to read your manuscripts and save your log.";
+  const msg = kind === "scope" ? "Google didn't give the app permission to save your log to Drive. Sign in again and check every box on Google's permission screen." : kind === "expired" ? "Your Google sign-in timed out. Your log is still here." : kind === "denied" ? "Google sign-in was cancelled. The app needs it to read your docs and save your log." : "Sign in with Google to read your manuscripts and save your log.";
   n.innerHTML = '<span style="flex:1;min-width:12em">'+esc(msg)+'</span><button class="gbtn" type="button" id="gSign">'+g+'Sign in with Google</button>';
   $("gSign").onclick = () => Auth.go(false);
 }
@@ -479,7 +484,8 @@ function fillSettings(){
   $("setBook").innerHTML = bs.map(b => '<option value="'+esc(b.id)+'"'+(a && b.id===a.id?" selected":"")+'>'+esc(b.title)+'</option>').join("");
   [$("setTitle"), $("setLink"), $("setGoal"), $("saveSet")].forEach(el => el.disabled = !a);
   $("setTitle").value = a ? a.title || "" : ""; $("setLink").value = a ? a.link || "" : ""; $("setGoal").value = a ? a.goal || "" : "";
-  const em = lsGet("email"); $("acctMsg").textContent = Auth.token() ? "Signed in to Google"+(em ? " as "+em : "") : "Not signed in";
+  const em = lsGet("email"); const sv = S.savedAt || lsGet("savedAt");
+  $("acctMsg").textContent = Auth.token() ? "Signed in to Google"+(em ? " as "+em : "")+" · "+(sv ? "last saved to Drive "+new Date(sv).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "not saved to Drive yet") : "Not signed in. Your log is only on this device until you sign in.";
 }
 function wireSettings(){
   $("setBook").onchange = e => { S.editId = e.target.value; $("setMsg").textContent = ""; fillSettings(); };
