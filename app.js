@@ -7,6 +7,7 @@ const CFG = window.WRITING_LOG_CONFIG || {};
 const CLIENT_ID = CFG.googleClientId || "";
 const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents.readonly";
 const DATA_NAME = "Writing Log data.json";
+const COMMENT_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 const LS = "writinglog.";
 const TODS = [["early-morning","Early morning"],["late-morning","Later morning"],["noon","Noon"],["early-afternoon","Early afternoon"],["mid-afternoon","Mid afternoon"],["evening","Evening"],["night","Night"]];
 const TOD_NAME = Object.fromEntries(TODS);
@@ -122,7 +123,7 @@ const Auth = {
     if (!CLIENT_ID){ showAuth("setup"); return; }
     const state = Math.random().toString(36).slice(2);
     lsSet("authState", {state, silent: !!silent, at: Date.now()});
-    const p = new URLSearchParams({client_id: CLIENT_ID, redirect_uri: this.redirectUri(), response_type: "token", scope: SCOPES,
+    const p = new URLSearchParams({client_id: CLIENT_ID, redirect_uri: this.redirectUri(), response_type: "token", scope: SCOPES + (lsGet("wantComments") ? " " + COMMENT_SCOPE : ""),
       include_granted_scopes: "true", state});
     if (silent) p.set("prompt", "none"); else p.set("prompt", "consent");
     const hint = lsGet("email"); if (hint) p.set("login_hint", hint);
@@ -137,6 +138,7 @@ const Auth = {
     if (!saved || saved.state !== h.get("state")) return {error:"state"};
     if (h.get("error")) return {error: h.get("error"), silent: saved.silent};
     lsSet("token", {v: h.get("access_token"), exp: Date.now() + (Number(h.get("expires_in"))||3600)*1000});
+    lsSet("scopes", h.get("scope") || "");
     return {ok:true};
   },
   signOut(){ const t = lsGet("token"); lsDel("token"); lsDel("fileId"); lsDel("email");
@@ -249,6 +251,7 @@ async function syncNow(){
     try { const n = await readCount(b.docId); if (recordToday(n, b.docId)) changed = true; }
     catch(e){ if (e.code === "auth"){ if (!S.data.active) renew(); else showAuth("expired"); break; } if (!S.driveErr) S.driveErr = docErr(e, books().length > 1 ? b : null); }
   }
+  await refreshCommentGoal();
   S.syncing = false; if (changed) save(); renderAll();
 }
 
@@ -414,8 +417,8 @@ function renderPanel(){
       (x.words!=null && x.words!=="" ? '<span class="wds num">'+fmt(x.words)+'</span>' : '')+del+'</div>';
   });
   const gd = goalFor(d);
-  if (gd){ const dn = goalDone(d, gd); const un = gd.unit === "pages" ? "pages" : "words";
-    rows = '<div class="item"><span class="type goal">Goal</span><span class="grow">'+fmt(gd.target)+' '+un+' · '+fmt(dn)+' done</span>'+(dn >= gd.target ? '<span class="wds" style="color:var(--gold)">★ Met</span>' : '')+'</div>' + rows; }
+  if (gd){ const dn = goalDone(d, gd);
+    rows = '<div class="item"><span class="type goal">Goal</span><span class="grow">'+fmt(gd.target)+' '+unitName(gd, gd.target)+(gd.unit === "comments" ? " to clear" : "")+' · '+fmt(dn)+(gd.unit === "comments" ? " cleared" : " done")+'</span>'+(dn >= gd.target ? '<span class="wds" style="color:var(--gold)">★ Met</span>' : '')+'</div>' + rows; }
   if (!rows) rows = '<div class="item"><span class="grow">'+(isSun(d)?"Sunday rest day. You can still log something if you wrote.":"Nothing logged yet.")+'</span></div>';
   const f = S.form;
   p.innerHTML = '<div class="panel-head"><h3>'+esc(nice)+'</h3><span class="big num">'+fmt(info.total)+'</span><span class="label">words</span></div>'+
@@ -444,27 +447,96 @@ function renderTod(){
     '<p class="label" style="margin:4px 0 0">'+(used.length ? 'Average words per session · number of sessions' : 'Fills in as you log writing, editing and sprints')+'</p>';
 }
 // ---------------- daily goal ----------------
+const UNITS = [["words","Words"],["pages","Pages"],["comments","Comments"]];
+const UNIT_NAME = {words:["word","words"], pages:["page","pages"], comments:["comment","comments"]};
+function unitName(g, n){ const u = UNIT_NAME[g.unit] || UNIT_NAME.words; return n === 1 ? u[0] : u[1]; }
 function goalFor(d){ const g = (S.data.goals || {})[d]; return g && !g.cleared && g.target > 0 ? g : null; }
-function goalDone(d, g){ return g.unit === "pages" ? (g.done || 0) : dayInfo(d).total; }
+function goalDone(d, g){
+  if (g.unit === "pages") return g.current != null && g.start != null ? Math.max(0, g.current - g.start) : (g.done || 0);
+  if (g.unit === "comments") return g.done || 0;
+  return dayInfo(d).total;
+}
 function setGoal(d, g){ (S.data.goals || (S.data.goals = {}))[d] = Object.assign({}, g, {at: Date.now()}); save(); }
+function hasCommentScope(){ return (lsGet("scopes") || "").indexOf(COMMENT_SCOPE) >= 0; }
+function askCommentScope(){ lsSet("wantComments", true); lsSet("pendingGoal", "comments"); Auth.go(false); }
+async function readOpenComments(did){
+  const ids = []; let tok = "";
+  do {
+    const r = await gfetch("https://www.googleapis.com/drive/v3/files/"+encodeURIComponent(did)+"/comments?pageSize=100&includeDeleted=false&fields=nextPageToken,comments(id,resolved)"+(tok ? "&pageToken="+encodeURIComponent(tok) : ""));
+    const j = await r.json(); (j.comments || []).forEach(c => { if (!c.resolved) ids.push(c.id); }); tok = j.nextPageToken || "";
+  } while (tok);
+  return ids;
+}
+async function loadFormComments(f){
+  const ab = activeBook(); if (!ab) return;
+  f.comments = {loading: true}; f.commentsDoc = ab.docId;
+  try { f.comments = {ids: await readOpenComments(ab.docId)}; }
+  catch(e){ if (e.code === "scope" || e.code === "forbidden") lsSet("scopes", ""); f.comments = {err: true}; }
+  if (S.goalForm === f) renderGoal();
+}
+async function refreshCommentGoal(){
+  const t = todayStr(); const g = goalFor(t);
+  if (!g || g.unit !== "comments" || !hasCommentScope() || !Auth.token()) return;
+  try {
+    const open = await readOpenComments(g.docId); const now = new Set(open);
+    const done = (g.startIds || []).filter(id => !now.has(id)).length;
+    if (done !== g.done || open.length !== g.open) setGoal(t, Object.assign({}, g, {done, open: open.length}));
+  } catch(e){ if (e.code === "scope" || e.code === "forbidden") lsSet("scopes", ""); }
+}
+function openGoalForm(unit){
+  const u = unit || lsGet("lastGoalUnit") || "words";
+  const last = lsGet("lastGoal_"+u);
+  S.goalForm = {unit: u, target: last ? String(last) : "", start: ""};
+  renderGoal();
+  if (u === "comments" && hasCommentScope()) loadFormComments(S.goalForm);
+  const i = $("goalStart") || $("goalNum"); if (i){ i.focus(); i.select(); }
+}
 function renderGoal(){
   const box = $("goalBox"), btn = $("goalOpen"); const t = todayStr(); const g = goalFor(t); const f = S.goalForm;
   btn.hidden = !!g || !!f;
   if (f){
-    box.innerHTML = '<div class="goalform"><span class="label">Today\'s goal</span>'+
-      '<div class="seg" role="group" aria-label="Goal type">'+[["words","Words"],["pages","Pages"]].map(([k,v]) => '<button type="button" data-gunit="'+k+'" aria-pressed="'+(f.unit===k)+'">'+v+'</button>').join("")+'</div>'+
-      '<input class="inp num" id="goalNum" type="number" min="1" inputmode="numeric" aria-label="'+(f.unit==="pages"?"Pages":"Words")+'" placeholder="'+(f.unit==="pages"?"20":"1000")+'" value="'+esc(f.target)+'">'+
-      '<button class="btn teal sm" id="goalSet" type="button">Set goal</button>'+
+    const ab = activeBook(); let mid = "", canSet = true;
+    const num = (id, ph, val, label) => '<label class="glab" for="'+id+'">'+label+'</label><input class="inp num" id="'+id+'" type="number" min="0" inputmode="numeric" placeholder="'+ph+'" value="'+esc(val)+'">';
+    if (f.unit === "words") mid = num("goalNum", "1000", f.target, "Words");
+    else if (f.unit === "pages") mid = num("goalStart", "1", f.start, "Starting page") + num("goalNum", "20", f.target, "Pages to edit");
+    else if (!ab){ mid = '<span class="ginfo">Add a book first.</span>'; canSet = false; }
+    else if (!hasCommentScope()){ mid = '<span class="ginfo">To count the comments in '+esc(ab.title)+', Google needs to OK the app reading your docs\' comments. It asks once.</span><button class="btn sm" id="goalAllow" type="button">Allow</button>'; canSet = false; }
+    else {
+      const c = f.comments || {};
+      mid = '<span class="ginfo">'+esc(ab.title)+': '+(c.ids ? '<b class="num">'+fmt(c.ids.length)+'</b> open '+(c.ids.length === 1 ? "comment" : "comments") : c.err ? "couldn't count the comments" : "counting comments…")+'</span>'+
+        (c.err ? '<button class="linkbtn" id="goalRetry" type="button">Try again</button>' : '') + num("goalNum", "30", f.target, "Comments to clear");
+      canSet = !!c.ids;
+    }
+    box.innerHTML = '<div class="goalform"><div class="grow1"><span class="label">Today\'s goal</span>'+
+      '<div class="seg" role="group" aria-label="Goal type">'+UNITS.map(([k,v]) => '<button type="button" data-gunit="'+k+'" aria-pressed="'+(f.unit===k)+'">'+v+'</button>').join("")+'</div></div>'+
+      '<div class="grow1">'+mid+'</div>'+
+      '<div class="grow1"><button class="btn teal sm" id="goalSet" type="button"'+(canSet ? '' : ' disabled')+'>Set goal</button>'+
       '<button class="linkbtn" id="goalCancel" type="button">Cancel</button>'+
-      (g ? '<button class="linkbtn" id="goalRemove" type="button">Remove goal</button>' : '')+'</div>';
-    box.querySelectorAll("[data-gunit]").forEach(b => b.onclick = () => { f.target = $("goalNum").value; f.unit = b.dataset.gunit; renderGoal(); $("goalNum").focus(); });
-    $("goalNum").oninput = e => { f.target = e.target.value; };
-    $("goalNum").onkeydown = e => { if (e.key === "Enter") $("goalSet").click(); };
+      (g ? '<button class="linkbtn" id="goalRemove" type="button">Remove goal</button>' : '')+'</div></div>';
+    const keep = () => { if ($("goalNum")) f.target = $("goalNum").value; if ($("goalStart")) f.start = $("goalStart").value; };
+    box.querySelectorAll("[data-gunit]").forEach(b => b.onclick = () => {
+      keep(); if (f.unit === b.dataset.gunit) return;
+      f.unit = b.dataset.gunit; const last = lsGet("lastGoal_"+f.unit); f.target = last ? String(last) : "";
+      if (f.unit === "comments" && hasCommentScope() && (!f.comments || f.commentsDoc !== (activeBook()||{}).docId)) loadFormComments(f);
+      renderGoal();
+    });
+    ["goalNum","goalStart"].forEach(id => { const el = $(id); if (el){ el.oninput = keep; el.onkeydown = e => { if (e.key === "Enter") $("goalSet").click(); }; } });
+    const al = $("goalAllow"); if (al) al.onclick = askCommentScope;
+    const rt = $("goalRetry"); if (rt) rt.onclick = () => loadFormComments(f);
     $("goalSet").onclick = () => {
-      const n = parseInt($("goalNum").value, 10); if (!n || n < 1){ $("goalNum").focus(); return; }
-      const prev = goalFor(t);
-      setGoal(t, {unit: f.unit, target: n, done: prev && prev.unit === f.unit ? (prev.done || 0) : 0});
-      lsSet("lastGoal", {unit: f.unit, target: n}); S.goalForm = null; renderAll();
+      keep(); const n = parseInt(f.target, 10); if (!n || n < 1){ $("goalNum").focus(); return; }
+      const prev = goalFor(t); let ng;
+      if (f.unit === "words") ng = {unit: "words", target: n};
+      else if (f.unit === "pages"){
+        const st = parseInt(f.start, 10); if (isNaN(st) || st < 0){ $("goalStart").focus(); return; }
+        ng = {unit: "pages", target: n, start: st, current: prev && prev.unit === "pages" && prev.start === st ? prev.current : st};
+      } else {
+        const ab = activeBook(); if (!f.comments || !f.comments.ids) return;
+        ng = prev && prev.unit === "comments" && prev.docId === ab.docId
+          ? Object.assign({}, prev, {target: n})
+          : {unit: "comments", target: n, docId: ab.docId, bookTitle: ab.title, startIds: f.comments.ids, open: f.comments.ids.length, done: 0};
+      }
+      setGoal(t, ng); lsSet("lastGoal_"+f.unit, n); lsSet("lastGoalUnit", f.unit); S.goalForm = null; renderAll();
     };
     $("goalCancel").onclick = () => { S.goalForm = null; renderGoal(); };
     const rm = $("goalRemove"); if (rm) rm.onclick = () => { (S.data.goals || (S.data.goals = {}))[t] = {cleared: true, at: Date.now()}; save(); S.goalForm = null; renderAll(); };
@@ -472,17 +544,28 @@ function renderGoal(){
   }
   if (!g){ box.innerHTML = ""; return; }
   const done = goalDone(t, g); const pct = Math.min(100, done / g.target * 100); const met = done >= g.target;
-  const unit = g.unit === "pages" ? (g.target === 1 ? "page" : "pages") : "words";
+  let detail = "", act = "";
+  if (g.unit === "pages"){
+    detail = '<span class="dleft num">Page '+fmt(g.start)+' → '+fmt(g.current)+'</span>';
+    act = '<label class="glab" for="pgNow">On page</label><input class="tinp num" id="pgNow" type="number" min="0" inputmode="numeric" value="'+esc(g.current)+'"><button class="tiny plus" id="pgSave" type="button">Update</button>';
+  } else if (g.unit === "comments"){
+    detail = g.open != null ? '<span class="dleft num">'+fmt(g.open)+' still open in '+esc(g.bookTitle || titleFor(g.docId))+'</span>' : '';
+    if (!hasCommentScope()) act = '<button class="linkbtn" id="goalAllow2" type="button">Count comments here</button>';
+  }
   box.innerHTML = '<div class="dgoal'+(met ? " met" : "")+'"><div class="dtop">'+
-    '<span class="dlabel">Today\'s goal</span><span class="dnum num">'+fmt(done)+' / '+fmt(g.target)+' '+unit+'</span>'+
-    (met ? '<span class="dmet">Goal met! ♥</span>' : '<span class="dleft num">'+fmt(g.target - done)+' to go</span>')+
-    '<span class="dact">'+(g.unit === "pages" ? '<button class="tiny" id="pgMinus" type="button" aria-label="Take back a page"'+(done ? '' : ' disabled')+'>−</button><button class="tiny plus" id="pgPlus" type="button">+1 page</button>' : '')+
-    '<button class="linkbtn" id="goalEdit" type="button">Change</button></span></div>'+
+    '<span class="dlabel">Today\'s goal</span><span class="dnum num">'+fmt(done)+' / '+fmt(g.target)+' '+unitName(g, g.target)+(g.unit === "comments" ? " cleared" : "")+'</span>'+
+    (met ? '<span class="dmet">Goal met! ♥</span>' : '<span class="dleft num">'+fmt(g.target - done)+' to go</span>')+detail+
+    '<span class="dact">'+act+'<button class="linkbtn" id="goalEdit" type="button">Change</button></span></div>'+
     '<div class="dtrack" role="progressbar" aria-label="Today\'s goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(pct)+'"><div class="dfill" style="width:'+pct.toFixed(1)+'%"></div></div></div>';
-  const plus = $("pgPlus"), minus = $("pgMinus");
-  if (plus) plus.onclick = () => { setGoal(t, Object.assign({}, g, {done: (g.done || 0) + 1})); renderGoal(); renderCal(); renderPanel(); };
-  if (minus) minus.onclick = () => { setGoal(t, Object.assign({}, g, {done: Math.max(0, (g.done || 0) - 1)})); renderGoal(); renderCal(); renderPanel(); };
-  $("goalEdit").onclick = () => { S.goalForm = {unit: g.unit, target: String(g.target)}; renderGoal(); };
+  const ps = $("pgSave");
+  if (ps){ const go = () => { const v = parseInt($("pgNow").value, 10); if (isNaN(v) || v < 0) return; setGoal(t, Object.assign({}, g, {current: v})); renderGoal(); renderCal(); renderPanel(); };
+    ps.onclick = go; $("pgNow").onkeydown = e => { if (e.key === "Enter") go(); }; }
+  const al = $("goalAllow2"); if (al) al.onclick = askCommentScope;
+  $("goalEdit").onclick = () => {
+    S.goalForm = {unit: g.unit, target: String(g.target), start: g.start != null ? String(g.start) : ""};
+    if (g.unit === "comments" && hasCommentScope()) loadFormComments(S.goalForm);
+    renderGoal();
+  };
 }
 function renderAll(){ renderGoal(); renderTotals(); renderMs(); renderSprint(); renderCal(); renderPanel(); renderTod(); fillSettings(); }
 
@@ -582,7 +665,7 @@ function wireSettings(){
   $("prevM").onclick = () => { S.view = new Date(S.view.getFullYear(), S.view.getMonth()-1, 1); renderCal(); };
   $("nextM").onclick = () => { S.view = new Date(S.view.getFullYear(), S.view.getMonth()+1, 1); renderCal(); };
   $("syncBtn").onclick = () => syncNow();
-  $("goalOpen").onclick = () => { const last = lsGet("lastGoal") || {unit: "words", target: ""}; S.goalForm = {unit: last.unit, target: last.target ? String(last.target) : ""}; renderGoal(); const i = $("goalNum"); if (i){ i.focus(); i.select(); } };
+  $("goalOpen").onclick = () => openGoalForm();
 }
 
 // ---------------- boot ----------------
@@ -605,6 +688,7 @@ async function boot(){
   if (!lsGet("email")) fetchEmail();
   await pull();
   if (lsGet("dirty")){ S.dirty = true; flush(); }
+  const pg = lsGet("pendingGoal"); if (pg){ lsDel("pendingGoal"); if (!goalFor(todayStr()) || goalFor(todayStr()).unit === pg) openGoalForm(pg); }
   const ps = lsGet("pendingStop"), pst = lsGet("pendingStart"); lsDel("pendingStop"); lsDel("pendingStart");
   if (ps && S.data.active) await stopSession();
   else if (pst && !S.data.active) await startSession(pst.type, pst.durationMin);
