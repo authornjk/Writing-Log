@@ -324,7 +324,7 @@ function renderSprint(){
     wirePicker();
     $("spMin").oninput = e => { S.sprintMin = e.target.value; };
     $("spMin").onkeydown = e => { if (e.key === "Enter") $("spGo").click(); };
-    $("spGo").onclick = () => { const m = parseInt($("spMin").value || "25", 10); if (!m || m < 1) return; S.sprintMin = String(m); armAlarm(m*60000); startSession("sprint", m); };
+    $("spGo").onclick = () => { const m = parseInt($("spMin").value || "25", 10); if (!m || m < 1) return; S.sprintMin = String(m); armAlarm(); startSession("sprint", m); };
     $("spBack").onclick = () => { S.picking = false; renderSprint(); };
     return;
   }
@@ -337,42 +337,66 @@ function renderSprint(){
       (S.ringing ? '<button class="btn" id="spHush" type="button">Silence alarm</button>' : '')+
       '<button class="btn primary" id="spStop" type="button"'+(S.busy?' disabled':'')+'>'+(S.busy?"Reading your doc…": up ? "Log sprint" : endAt ? "Stop early" : "Stop")+'</button></div>'+
       '<div class="meta num">Started at '+st+(sp.startCount!=null?' with '+fmt(sp.startCount)+' words':'')+' · <button class="linkbtn" id="spCancel" type="button">Cancel</button></div>'+
-      (alarmOff ? '<div class="note">The alarm is off because the app was closed or reloaded. <button class="linkbtn" id="spRearm" type="button">Turn the alarm back on</button></div>' : '')+
+      (alarmOff ? '<div class="note err"><span style="flex:1;min-width:12em">The alarm is off because the app was closed or reloaded.</span><button class="btn sm primary" id="spRearm" type="button">Turn on the alarm</button></div>' : '')+
       (S.stopManual ? '<div class="form"><div class="row"><label class="label" for="spManual">Words this session</label><input class="inp num" id="spManual" type="number" inputmode="numeric"><button class="btn teal" id="spManualSave" type="button">Save</button></div><div class="meta">Google couldn\'t be reached, so type the words yourself.</div></div>' : "");
   $("spStop").onclick = stopSession;
   $("spCancel").onclick = cancelSession;
   const h = $("spHush"); if (h) h.onclick = () => silence();
-  const r = $("spRearm"); if (r) r.onclick = () => { armAlarm(endAt - Date.now()); renderSprint(); };
+  const r = $("spRearm"); if (r) r.onclick = () => { armAlarm(); renderSprint(); };
   const ms = $("spManualSave"); if (ms) ms.onclick = () => { const w = parseInt($("spManual").value,10); if (!isNaN(w)) finishSession(null, w); };
-  let wasUp = up;
-  tick = setInterval(() => { const el = $("spTimer"); if (el) el.textContent = timeText();
-    if (endAt && !wasUp && Date.now() >= endAt){ wasUp = true; S.ringing = !!alarm.ctx; renderSprint(); } }, 500);
+  const check = () => { const el = $("spTimer"); if (el) el.textContent = timeText();
+    if (endAt && Date.now() >= endAt && alarm.ctx && alarm.rungFor !== sp.start){ alarm.rungFor = sp.start; ring(); renderSprint(); } };
+  tick = setInterval(check, 500); setTimeout(check, 0);
 }
 
 // ---------------- alarm ----------------
-const alarm = { ctx:null, lock:null };
-function armAlarm(ms){
+// The sound is unlocked when you tap Start (phones only allow sound after a tap), then played when the timer
+// reaches zero. "playback" lets it ring even when the phone's silent switch is on.
+const alarm = { ctx:null, lock:null, loop:null, rungFor:null };
+function armAlarm(){
   silence(true);
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch(_){}
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (AC){
-      const ctx = new AC(); alarm.ctx = ctx;
-      const t0 = ctx.currentTime + Math.max(0, ms)/1000;
-      for (let i = 0; i < 12; i++) [[880,0],[1318.5,0.16]].forEach(([f,off]) => {
-        const o = ctx.createOscillator(), g = ctx.createGain(); const at = t0 + i*1.3 + off;
-        o.type = "sine"; o.frequency.value = f; g.gain.setValueAtTime(0.0001, at);
-        g.gain.exponentialRampToValueAtTime(0.35, at+0.02); g.gain.exponentialRampToValueAtTime(0.0001, at+0.5);
-        o.connect(g); g.connect(ctx.destination); o.start(at); o.stop(at+0.55);
-      });
+      const ctx = new AC(); alarm.ctx = ctx; if (ctx.resume) ctx.resume();
+      const o = ctx.createOscillator(), g = ctx.createGain(); g.gain.value = 0.0001;
+      o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.05);
     }
   } catch(_){ alarm.ctx = null; }
   try { if (navigator.wakeLock) navigator.wakeLock.request("screen").then(l => { alarm.lock = l; }).catch(()=>{}); } catch(_){}
 }
+function ring(){
+  const ctx = alarm.ctx; if (!ctx) return;
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch(_){}
+  if (ctx.state !== "running" && ctx.resume) ctx.resume();
+  let n = 0;
+  const beep = () => {
+    try {
+      const t0 = ctx.currentTime + 0.03;
+      [[880,0],[1318.5,0.16]].forEach(([f,off]) => {
+        const o = ctx.createOscillator(), g = ctx.createGain(); const at = t0 + off;
+        o.type = "sine"; o.frequency.value = f; g.gain.setValueAtTime(0.0001, at);
+        g.gain.exponentialRampToValueAtTime(0.4, at+0.02); g.gain.exponentialRampToValueAtTime(0.0001, at+0.5);
+        o.connect(g); g.connect(ctx.destination); o.start(at); o.stop(at+0.55);
+      });
+    } catch(_){}
+    if (++n >= 45){ clearInterval(alarm.loop); alarm.loop = null; S.ringing = false; renderSprint(); }
+  };
+  clearInterval(alarm.loop); beep(); alarm.loop = setInterval(beep, 1300);
+  S.ringing = true;
+}
 function silence(quiet){
+  clearInterval(alarm.loop); alarm.loop = null;
   if (alarm.ctx){ try { alarm.ctx.close(); } catch(_){} alarm.ctx = null; }
   if (alarm.lock){ try { alarm.lock.release(); } catch(_){} alarm.lock = null; }
   S.ringing = false; if (quiet !== true) renderSprint();
 }
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || !alarm.ctx) return;
+  if (alarm.ctx.state !== "running" && alarm.ctx.resume) alarm.ctx.resume();
+  if (S.data.active && navigator.wakeLock && !alarm.loop) navigator.wakeLock.request("screen").then(l => { alarm.lock = l; }).catch(()=>{});
+});
 
 function renderCal(){
   const v = S.view; const y = v.getFullYear(), m = v.getMonth();
@@ -695,7 +719,8 @@ async function boot(){
   syncNow();
 }
 // Renew the sign-in when coming back to the app with it expired (not in the middle of a session).
-function checkToken(){ if (!CLIENT_ID || !lsGet("everSigned")) return; if (!Auth.token() && !S.data.active && document.visibilityState === "visible") renew(); }
+function checkToken(e){ if (!CLIENT_ID || !lsGet("everSigned") || S.data.active || document.visibilityState !== "visible") return;
+  if (!Auth.token() || (e && e.type === "visibilitychange" && tokenLeft() < 15*60000)) renew(); }
 document.addEventListener("visibilitychange", checkToken);
 const lastRead = () => Math.max(0, ...Object.values(S.counts).map(c => c.at));
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Auth.token()){ pull().then(() => { if (Date.now() - lastRead() > 30000) syncNow(); }); } });
