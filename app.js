@@ -118,8 +118,8 @@ function streaks(){
   let run = 0, long = 0;
   for (let d = dates[0]; d <= today; d = addDays(d,1)){
     if (isSun(d)) continue;
-    if (offKind(d)) continue;   // vacation and sick days are skipped: they never add to or break a streak
-    if (dayInfo(d).active){ run++; long = Math.max(long, run); }
+    if (dayInfo(d).active){ run++; long = Math.max(long, run); }   // any day you write counts, vacation and sick days included
+    else if (offKind(d)) continue;   // a vacation or sick day with no writing is skipped: it never ends a streak
     else if (d < today) run = 0;
   }
   return {cur:run, long};
@@ -455,7 +455,7 @@ function renderPanel(){
   if (gd){ const dn = goalDone(d, gd);
     rows = '<div class="item"><span class="type goal">Goal</span><span class="grow">'+fmt(gd.target)+' '+unitName(gd, gd.target)+(gd.unit === "comments" ? " to clear" : "")+' · '+fmt(dn)+(gd.unit === "comments" ? " cleared" : " done")+'</span>'+(dn >= gd.target ? '<span class="wds" style="color:var(--gold)">★ Met</span>' : '')+'</div>' + rows; }
   const off = offKind(d);
-  if (off) rows = '<div class="item"><span class="type '+OFF_CLS[off]+'">'+OFF_ICON[off]+' '+OFF_NAME[off]+'</span><span class="grow">Skipped in your streak. It won\'t add to it or break it.</span><button class="x" id="offClear" type="button">Remove</button></div>' + rows;
+  if (off) rows = '<div class="item"><span class="type '+OFF_CLS[off]+'">'+OFF_ICON[off]+' '+OFF_NAME[off]+'</span><span class="grow">'+(info.active ? 'You wrote, so it counts toward your streak.' : 'Won\'t end your streak. If you write, it counts.')+'</span><button class="x" id="offClear" type="button">Remove</button></div>' + rows;
   if (!rows) rows = '<div class="item"><span class="grow">'+(isSun(d)?"Sunday rest day. You can still log something if you wrote.":"Nothing logged yet.")+'</span></div>';
   const f = S.form;
   p.innerHTML = '<div class="panel-head"><h3>'+esc(nice)+'</h3><span class="big num">'+fmt(info.total)+'</span><span class="label">words</span></div>'+
