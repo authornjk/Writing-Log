@@ -22,7 +22,10 @@ const ymd = d => d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
 const parse = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y,m-1,d); };
 const addDays = (s,n) => { const d = parse(s); d.setDate(d.getDate()+n); return ymd(d); };
 const isSun = s => parse(s).getDay() === 0;
-const todayStr = () => ymd(new Date());
+// A writing day runs from 2 am to 2 am, so a late-night session counts toward the day you started it.
+const DAY_START_HOUR = 2;
+const dayOf = ts => ymd(new Date(ts - DAY_START_HOUR*3600000));
+const todayStr = () => dayOf(Date.now());
 const lsGet = k => { try { return JSON.parse(localStorage.getItem(LS+k)); } catch(_){ return null; } };
 const lsSet = (k,v) => { try { localStorage.setItem(LS+k, JSON.stringify(v)); } catch(_){} };
 const lsDel = k => { try { localStorage.removeItem(LS+k); } catch(_){} };
@@ -66,13 +69,27 @@ function merge(a, b){
   for (const src of [a, b]) for (const [d, g] of Object.entries(src.goals || {})) {
     if (!out.goals[d] || (g.at||0) > (out.goals[d].at||0)) out.goals[d] = g;
   }
-  return out;
+  return normalizeDays(out);
 }
 
-const S = { data: lsGet("data") || emptyData(), counts:{}, view:null, selected:todayStr(), editId:null,
+// Files counts and sessions under the 2 am writing day (fixes anything saved under the old midnight rule).
+let normChanged = false;
+function normalizeDays(data){
+  for (const m of Object.values(data.snapshots || {})) {
+    for (const [d, s] of Object.entries(m)) {
+      if (!s.at || s.src === "nightly" || (s.m && s.m !== "api")) continue;
+      const wd = dayOf(s.at); if (wd === d) continue;
+      if (!m[wd] || (m[wd].at||0) < s.at) m[wd] = s;
+      delete m[d]; normChanged = true;
+    }
+  }
+  for (const s of Object.values(data.sessions || {})) if (s.start && s.source !== "manual" && s.date !== dayOf(s.start)){ s.date = dayOf(s.start); normChanged = true; }
+  return data;
+}
+const S = { data: normalizeDays(lsGet("data") || emptyData()), counts:{}, view:null, selected:todayStr(), editId:null,
   syncing:false, driveErr:null, form:{type:"writing", words:"", min:""}, picking:false, sprintMin:"", ringing:false,
   pendingDel:null, stopManual:false, busy:false, fileId: lsGet("fileId"), online:false, saving:false, dirty:false };
-{ const t = new Date(); S.view = new Date(t.getFullYear(), t.getMonth(), 1); }
+{ const t = parse(todayStr()); S.view = new Date(t.getFullYear(), t.getMonth(), 1); }
 
 function books(){ return S.data.books || []; }
 function activeBook(){ const bs = books(); return bs.find(b => b.id === S.data.activeId) || bs[0] || null; }
@@ -200,7 +217,8 @@ async function writeRemote(obj){
 }
 async function pull(){
   if (!Auth.token()) return;
-  try { const remote = await readRemote(); S.data = merge(S.data, remote); lsSet("data", S.data); S.online = true; S.loadErr = null;
+  try { const remote = await readRemote(); normChanged = false; S.data = merge(S.data, remote); lsSet("data", S.data); S.online = true; S.loadErr = null;
+    if (normChanged) save();
     if (!S.fileId && books().length) save(true); }
   catch(e){ handleErr(e); }
   renderAll();
@@ -667,11 +685,11 @@ function finishSession(endCount, manualWords){
   const planned = sp.durationMin ? sp.start + sp.durationMin*60000 : null;
   const end = planned && now > planned ? planned : now;
   const words = manualWords != null ? manualWords : (sp.startCount != null ? endCount - sp.startCount : 0);
-  S.data.sessions[uid("s")] = {date: ymd(new Date(sp.start)), type: sp.type, start: sp.start, end, minutes: Math.max(1, Math.round((end-sp.start)/60000)),
+  S.data.sessions[uid("s")] = {date: dayOf(sp.start), type: sp.type, start: sp.start, end, minutes: Math.max(1, Math.round((end-sp.start)/60000)),
     plannedMin: sp.durationMin || null, docId: sp.docId, bookId: sp.bookId, bookTitle: sp.bookTitle, startCount: sp.startCount ?? null, endCount: endCount ?? null,
     words, timeOfDay: sp.timeOfDay || null, at: now};
   if (endCount != null) recordToday(endCount, sp.docId);
-  S.data.active = null; S.data.activeAt = now; S.stopManual = false; S.selected = ymd(new Date(sp.start));
+  S.data.active = null; S.data.activeAt = now; S.stopManual = false; S.selected = dayOf(sp.start);
   save(true); renderAll();
 }
 function cancelSession(){ silence(true); S.data.active = null; S.data.activeAt = Date.now(); S.stopManual = false; save(true); renderAll(); }
