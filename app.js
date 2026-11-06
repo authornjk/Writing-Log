@@ -43,7 +43,7 @@ function countWords(text){
 // data = { v, books:[{id,title,docId,link,goal}], activeId, booksAt,
 //          snapshots:{ docId:{ "YYYY-MM-DD":{count,at,m} } },   m = "api" (this app/nightly) or "import"
 //          sessions:{ id:{...} }, deleted:{ id:ts }, active:{...}|null, activeAt }
-function emptyData(){ return {v:1, books:[], activeId:null, booksAt:0, snapshots:{}, sessions:{}, deleted:{}, active:null, activeAt:0, goals:{}}; }
+function emptyData(){ return {v:1, books:[], activeId:null, booksAt:0, snapshots:{}, sessions:{}, deleted:{}, active:null, activeAt:0, goals:{}, daysOff:{}}; }
 function merge(a, b){
   a = a || emptyData(); b = b || emptyData();
   const out = emptyData();
@@ -59,6 +59,9 @@ function merge(a, b){
   for (const src of [a, b]) for (const [did, m] of Object.entries(src.snapshots || {})) {
     const o = out.snapshots[did] || (out.snapshots[did] = {});
     for (const [d, s] of Object.entries(m)) { if (!o[d] || (s.at||0) > (o[d].at||0)) o[d] = s; }
+  }
+  for (const src of [a, b]) for (const [d, o] of Object.entries(src.daysOff || {})) {
+    if (!out.daysOff[d] || (o.at||0) > (out.daysOff[d].at||0)) out.daysOff[d] = o;
   }
   for (const src of [a, b]) for (const [d, g] of Object.entries(src.goals || {})) {
     if (!out.goals[d] || (g.at||0) > (out.goals[d].at||0)) out.goals[d] = g;
@@ -101,6 +104,12 @@ function dayInfo(d){
   const net = known.length ? known.reduce((a,x) => a + x.delta, 0) : null;
   return { delta, total, active: total > 0 || ss.length > 0, ss, net, parts };
 }
+// Vacation and sick days: { "YYYY-MM-DD": {kind:"vacation"|"sick"|null, at} }. kind null means it was cleared.
+const OFF_NAME = {vacation:"Vacation", sick:"Sick day"};
+const OFF_ICON = {vacation:"🌴", sick:"🤒"};
+const OFF_CLS = {vacation:"vac", sick:"sick"};
+function offKind(d){ const o = (S.data.daysOff || {})[d]; return o && OFF_NAME[o.kind] ? o.kind : null; }
+function setOff(d, kind){ (S.data.daysOff || (S.data.daysOff = {}))[d] = {kind: kind || null, at: Date.now()}; save(); }
 function sumRange(from, to){ let t = 0; for (let d = from; d <= to; d = addDays(d,1)) t += dayInfo(d).total; return t; }
 function streaks(){
   const today = todayStr();
@@ -110,6 +119,7 @@ function streaks(){
   for (let d = dates[0]; d <= today; d = addDays(d,1)){
     if (isSun(d)) continue;
     if (dayInfo(d).active){ run++; long = Math.max(long, run); }
+    else if (offKind(d)) continue;   // vacation or sick day with no writing: the streak just waits
     else if (d < today) run = 0;
   }
   return {cur:run, long};
@@ -407,13 +417,14 @@ function renderCal(){
   for (let i=0;i<lead;i++) h += '<div class="day out" aria-hidden="true"></div>';
   for (let d=1; d<=days; d++){
     const s = y+"-"+pad(m+1)+"-"+pad(d); const info = dayInfo(s);
-    const cls = ["day"]; if (isSun(s)) cls.push("sun"); if (s===today) cls.push("today"); if (s===S.selected) cls.push("sel"); if (s>today) cls.push("future");
+    const cls = ["day"]; if (isSun(s)) cls.push("sun"); const off = offKind(s); if (off) cls.push(OFF_CLS[off]); if (s===today) cls.push("today"); if (s===S.selected) cls.push("sel"); if (s>today) cls.push("future");
     let w = '<span class="w zero">0</span>';
     if (info.total > 0) w = '<span class="w num">'+short(info.total)+'</span>';
     else if (info.net != null && info.net < 0) w = '<span class="w neg num" title="Net change in the doc">'+short(info.net)+'</span>';
+    else if (off) w = '<span class="w off">'+(off === "vacation" ? "Vacay" : "Sick")+'</span>';
     const gd = goalFor(s); const gmet = gd && goalDone(s, gd) >= gd.target;
     const dots = info.ss.slice(0,4).map(x => '<i class="'+(x.type==="sprint"?"s":x.type==="editing"?"e":"")+'"></i>').join("");
-    h += '<button type="button" class="'+cls.join(" ")+'" data-day="'+s+'" aria-label="'+parse(s).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})+', '+fmt(info.total)+' words'+(gmet ? ', daily goal met' : '')+'"><span class="d">'+d+'</span>'+w+'<span class="dots">'+dots+'</span>'+(gmet ? '<span class="gm" aria-hidden="true">★</span>' : '')+'</button>';
+    h += '<button type="button" class="'+cls.join(" ")+'" data-day="'+s+'" aria-label="'+parse(s).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})+', '+fmt(info.total)+' words'+(gmet ? ', daily goal met' : '')+(off ? ', '+OFF_NAME[off] : '')+'"><span class="d">'+d+(off ? '<span class="oi" aria-hidden="true">'+OFF_ICON[off]+'</span>' : '')+'</span>'+w+'<span class="dots">'+dots+'</span>'+(gmet ? '<span class="gm" aria-hidden="true">★</span>' : '')+'</button>';
   }
   $("cal").innerHTML = h;
   $("cal").querySelectorAll("[data-day]").forEach(b => b.onclick = () => { S.selected = b.dataset.day; S.pendingDel = null; renderCal(); renderPanel(); });
@@ -443,6 +454,8 @@ function renderPanel(){
   const gd = goalFor(d);
   if (gd){ const dn = goalDone(d, gd);
     rows = '<div class="item"><span class="type goal">Goal</span><span class="grow">'+fmt(gd.target)+' '+unitName(gd, gd.target)+(gd.unit === "comments" ? " to clear" : "")+' · '+fmt(dn)+(gd.unit === "comments" ? " cleared" : " done")+'</span>'+(dn >= gd.target ? '<span class="wds" style="color:var(--gold)">★ Met</span>' : '')+'</div>' + rows; }
+  const off = offKind(d);
+  if (off) rows = '<div class="item"><span class="type '+OFF_CLS[off]+'">'+OFF_ICON[off]+' '+OFF_NAME[off]+'</span><span class="grow">Doesn\'t break your streak'+(info.active ? ', and the writing still counts' : '')+'.</span><button class="x" id="offClear" type="button">Remove</button></div>' + rows;
   if (!rows) rows = '<div class="item"><span class="grow">'+(isSun(d)?"Sunday rest day. You can still log something if you wrote.":"Nothing logged yet.")+'</span></div>';
   const f = S.form;
   p.innerHTML = '<div class="panel-head"><h3>'+esc(nice)+'</h3><span class="big num">'+fmt(info.total)+'</span><span class="label">words</span></div>'+
@@ -456,6 +469,7 @@ function renderPanel(){
     '</div>' : '');
   p.querySelectorAll("[data-ftype]").forEach(b => b.onclick = () => { f.type = b.dataset.ftype; f.words = $("fWords").value; f.min = $("fMin").value; renderPanel(); });
   if ($("fMin")){ $("fMin").oninput = e => { f.min = e.target.value; }; $("fWords").oninput = e => { f.words = e.target.value; }; $("fSave").onclick = saveEntry; }
+  const oc = $("offClear"); if (oc) oc.onclick = () => { setOff(d, null); renderAll(); };
   p.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { S.pendingDel = b.dataset.del; renderPanel(); });
   p.querySelectorAll("[data-no]").forEach(b => b.onclick = () => { S.pendingDel = null; renderPanel(); });
   p.querySelectorAll("[data-yes]").forEach(b => b.onclick = () => { const id = b.dataset.yes; S.pendingDel = null; delete S.data.sessions[id]; S.data.deleted[id] = Date.now(); save(); renderAll(); });
@@ -591,7 +605,42 @@ function renderGoal(){
     renderGoal();
   };
 }
-function renderAll(){ renderGoal(); renderTotals(); renderMs(); renderSprint(); renderCal(); renderPanel(); renderTod(); fillSettings(); }
+// ---------------- calendar settings (vacation / sick days) ----------------
+function renderOffCal(){
+  const mode = S.offMode; const v = S.offView; const y = v.getFullYear(), m = v.getMonth();
+  const vb = $("offVac"), sb = $("offSick");
+  vb.textContent = mode === "vacation" ? "Done" : "🌴 Vacation"; vb.classList.toggle("on", mode === "vacation"); vb.hidden = mode === "sick";
+  sb.textContent = mode === "sick" ? "Done" : "🤒 Sick day"; sb.classList.toggle("on", mode === "sick"); sb.hidden = mode === "vacation";
+  $("offHint").textContent = mode ? "Tap each "+(mode === "vacation" ? "vacation day" : "sick day")+". Tap a day again to undo it. Tap Done when you're finished."
+    : "Tap Vacation or Sick day, then tap the days on the calendar.";
+  $("offTitle").textContent = v.toLocaleString("en-US",{month:"long",year:"numeric"});
+  const today = todayStr(); const lead = new Date(y,m,1).getDay(); const days = new Date(y,m+1,0).getDate();
+  let h = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>'<div class="dow label">'+d+'</div>').join("");
+  for (let i=0;i<lead;i++) h += '<div class="day out" aria-hidden="true"></div>';
+  for (let d=1; d<=days; d++){
+    const s = y+"-"+pad(m+1)+"-"+pad(d); const off = offKind(s);
+    const cls = ["day"]; if (isSun(s)) cls.push("sun"); if (off) cls.push(OFF_CLS[off]); if (s===today) cls.push("today");
+    h += '<button type="button" class="'+cls.join(" ")+'" data-off="'+s+'"'+(mode ? '' : ' tabindex="-1"')+' aria-label="'+parse(s).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})+(off ? ', '+OFF_NAME[off] : '')+'">'+
+      '<span class="d">'+d+(off ? '<span class="oi" aria-hidden="true">'+OFF_ICON[off]+'</span>' : '')+'</span>'+
+      (off ? '<span class="w off">'+(off === "vacation" ? "Vacay" : "Sick")+'</span>' : '<span class="w zero">0</span>')+'</button>';
+  }
+  const c = $("offCal"); c.innerHTML = h;
+  c.className = "cal mini " + (mode ? "picking-"+OFF_CLS[mode] : "locked");
+  c.querySelectorAll("[data-off]").forEach(b => b.onclick = () => {
+    if (!S.offMode) return;
+    const s = b.dataset.off; setOff(s, offKind(s) === S.offMode ? null : S.offMode);
+    renderOffCal(); renderTotals(); renderCal(); renderPanel();
+  });
+}
+function wireOffCal(){
+  const t = new Date(); S.offView = new Date(t.getFullYear(), t.getMonth(), 1); S.offMode = null;
+  $("offVac").onclick = () => { S.offMode = S.offMode === "vacation" ? null : "vacation"; renderOffCal(); };
+  $("offSick").onclick = () => { S.offMode = S.offMode === "sick" ? null : "sick"; renderOffCal(); };
+  $("offPrev").onclick = () => { S.offView = new Date(S.offView.getFullYear(), S.offView.getMonth()-1, 1); renderOffCal(); };
+  $("offNext").onclick = () => { S.offView = new Date(S.offView.getFullYear(), S.offView.getMonth()+1, 1); renderOffCal(); };
+  $("calSettings").addEventListener("toggle", () => { if (!$("calSettings").open){ S.offMode = null; } renderOffCal(); });
+}
+function renderAll(){ renderGoal(); renderTotals(); renderMs(); renderSprint(); renderCal(); renderPanel(); renderTod(); fillSettings(); renderOffCal(); }
 
 // ---------------- sessions ----------------
 async function startSession(type, durationMin){
@@ -697,7 +746,7 @@ async function fetchEmail(){
   try { const r = await gfetch("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)"); const j = await r.json(); if (j.user) lsSet("email", j.user.emailAddress); } catch(_){}
 }
 async function boot(){
-  wireSettings();
+  wireSettings(); wireOffCal();
   const back = Auth.takeRedirect();
   renderAll();
   if (!CLIENT_ID){ showAuth("setup"); return; }

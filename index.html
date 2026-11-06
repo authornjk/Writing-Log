@@ -28,6 +28,7 @@ body{margin:0}
   --paper:#F5F8F7; --surface:#FFFFFF; --ink:#1D2B2A; --muted:#5B6D6A; --line:#DAE3E1;
   --coral:#EE5A4C; --coral-soft:#FDE9E6; --teal:#1B6E69; --teal-soft:#E2F1EF; --gold:#D98A1E; --gold-soft:#FBF0DD;
   --sun:#ECEFEE; --sun-ink:#97A5A2; --plate:#FFFFFF;
+  --sky:#2F78AE; --sky-soft:#E2EEF8; --plum:#8A5A9E; --plum-soft:#F2EAF6;
   --f-display:"Gilda Display", Georgia, "Times New Roman", serif;
   --f-body:"Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-label:"Josefin Sans", "Figtree", system-ui, sans-serif;
@@ -35,11 +36,11 @@ body{margin:0}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --paper:#0F1918; --surface:#162322; --ink:#E7EFED; --muted:#93A6A2; --line:#283A38;
   --coral:#FF7A6C; --coral-soft:#3A2220; --teal:#5CC4BC; --teal-soft:#16312F; --gold:#F2B04E; --gold-soft:#33291A;
-  --sun:#121D1C; --sun-ink:#5E706D; --plate:#FBFAF7; color-scheme:dark }}
+  --sun:#121D1C; --sun-ink:#5E706D; --plate:#FBFAF7; --sky:#7FB8E6; --sky-soft:#18293A; --plum:#C9A2DB; --plum-soft:#2A2030; color-scheme:dark }}
 :root[data-theme="dark"]{
   --paper:#0F1918; --surface:#162322; --ink:#E7EFED; --muted:#93A6A2; --line:#283A38;
   --coral:#FF7A6C; --coral-soft:#3A2220; --teal:#5CC4BC; --teal-soft:#16312F; --gold:#F2B04E; --gold-soft:#33291A;
-  --sun:#121D1C; --sun-ink:#5E706D; --plate:#FBFAF7; color-scheme:dark }
+  --sun:#121D1C; --sun-ink:#5E706D; --plate:#FBFAF7; --sky:#7FB8E6; --sky-soft:#18293A; --plum:#C9A2DB; --plum-soft:#2A2030; color-scheme:dark }
 *{box-sizing:border-box}
 body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
   padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:12px 48px}
@@ -106,6 +107,23 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .day .dots i.e{background:var(--teal)}
 .day.sun{background:var(--sun);border-color:transparent}
 .day.sun .d{color:var(--sun-ink)} .day.sun .w{color:var(--sun-ink)}
+/* Vacation and sick days: tinted like Sundays, plus an icon by the date and a word when nothing was written */
+.day.vac{background:var(--sky-soft);border-color:transparent}
+.day.sick{background:var(--plum-soft);border-color:transparent}
+.day.vac .d,.day.vac .w.off{color:var(--sky)} .day.sick .d,.day.sick .w.off{color:var(--plum)}
+.day .oi{font-size:10px;line-height:1;margin-left:2px}
+.day .w.off{font-family:var(--f-label);font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;visibility:visible}
+.cal.mini .day{min-height:44px}
+.cal.mini .day .w{font-size:11px}
+.cal.mini .day .w.off{font-size:9px;letter-spacing:.03em;text-overflow:clip}
+.cal.mini.locked .day:not(.out){cursor:default}
+.cal.mini.picking-vac .day:not(.out):hover{border-color:var(--sky)}
+.cal.mini.picking-sick .day:not(.out):hover{border-color:var(--plum)}
+.btn.vacbtn.on{background:var(--sky);border-color:var(--sky);color:var(--surface)}
+.btn.sickbtn.on{background:var(--plum);border-color:var(--plum);color:var(--surface)}
+.item .type.vac{background:var(--sky-soft);color:var(--sky)}
+.item .type.sick{background:var(--plum-soft);color:var(--plum)}
+.offhint{margin:0;font-size:13px;color:var(--muted)}
 .day.out{visibility:hidden}
 .day.today{border-color:var(--coral);border-width:2px;padding:5px 5px 4px}
 .day.sel{background:var(--teal-soft);border-color:var(--teal)}
@@ -273,6 +291,8 @@ body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
       <span><i style="background:var(--teal)"></i>Editing</span>
       <span><b style="color:var(--gold);font-size:11px">★</b>Daily goal met</span>
       <span><i style="background:var(--sun);border:1px solid var(--line)"></i>Sunday (rest day, never breaks a streak)</span>
+      <span><i style="background:var(--sky-soft);border:1px solid var(--sky)"></i>🌴 Vacation</span>
+      <span><i style="background:var(--plum-soft);border:1px solid var(--plum)"></i>🤒 Sick day</span>
     </div>
   </section>
 
@@ -314,6 +334,24 @@ body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
         <div class="row"><input id="importFile" type="file" accept="application/json,.json"><span id="importMsg" style="font-size:13px;color:var(--muted)"></span></div>
       </div>
       <div class="subform row"><span id="acctMsg" style="font-size:13px;color:var(--muted);flex:1"></span><button class="linkbtn" id="signOut" type="button">Sign out of Google</button></div>
+    </div>
+  </details>
+
+  <details class="settings" id="calSettings">
+    <summary>Calendar settings</summary>
+    <div class="form">
+      <p class="offhint">Vacation and sick days never break a streak. If you write on one anyway, it still counts toward the streak.</p>
+      <div class="row">
+        <button class="btn vacbtn" id="offVac" type="button">🌴 Vacation</button>
+        <button class="btn sickbtn" id="offSick" type="button">🤒 Sick day</button>
+      </div>
+      <p class="offhint" id="offHint"></p>
+      <div class="cal-head">
+        <button class="navbtn" id="offPrev" type="button" aria-label="Previous month">‹</button>
+        <h2 id="offTitle" style="font-size:20px">November 2026</h2>
+        <button class="navbtn" id="offNext" type="button" aria-label="Next month">›</button>
+      </div>
+      <div class="cal mini locked" id="offCal"></div>
     </div>
   </details>
 </div>
