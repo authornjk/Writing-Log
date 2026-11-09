@@ -210,7 +210,18 @@ details.settings .form{margin-top:10px}
 body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
 .goalbtn{margin-left:auto;border:1px dashed var(--line);background:none;border-radius:999px;padding:0 9px;font-size:11.5px;line-height:20px;color:var(--muted);font-weight:600}
 .goalbtn:hover{border-color:var(--gold);color:var(--gold)}
-#goalBox:empty{display:none}
+#goalBox:empty,#weekBox:empty{display:none}
+.goalbtns{margin-left:auto;display:flex;gap:6px}
+.goalbtns .goalbtn{margin-left:0}
+.goalbtn#weekOpen:hover{border-color:var(--teal);color:var(--teal)}
+.dgoal.wk{background:var(--teal-soft);border-color:var(--teal-soft)}
+.dgoal.wk.met{border-color:var(--teal)}
+.dgoal.wk .dlabel,.dgoal.wk .dmet{color:var(--teal)}
+.dgoal.wk .dfill{background:repeating-linear-gradient(-45deg,var(--teal) 0 8px,#2C8A84 8px 16px)}
+.goalform.wk{border-color:var(--teal)}
+.book .bplan{grid-column:1/-1;font-size:11.5px;color:var(--muted);margin-top:-3px}
+.book .bplan b{color:var(--ink);font-weight:600}
+.book .bplan b.hit{color:var(--teal)}
 .goalform{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding:8px 10px;border:1px dashed var(--gold);border-radius:10px}
 .goalform .grow1{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .goalform .seg button{padding:3px 11px;font-size:12px}
@@ -258,9 +269,10 @@ body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
     <div class="streak" style="margin-top:4px">
       <span><span class="heart">♥</span> Current streak: <strong class="num" id="sCur">0 days</strong></span>
       <span>Longest writing streak: <strong class="num" id="sLong">0 days</strong></span>
-      <button class="goalbtn" id="goalOpen" type="button">+ Daily goal</button>
+      <span class="goalbtns"><button class="goalbtn" id="goalOpen" type="button">+ Daily goal</button><button class="goalbtn" id="weekOpen" type="button">+ Weekly goal</button></span>
     </div>
     <div id="goalBox"></div>
+    <div id="weekBox"></div>
   </section>
 
   <div id="authBar" class="note" hidden></div>
@@ -313,6 +325,8 @@ body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
       <input class="inp wide" id="setLink" type="url" placeholder="https://docs.google.com/document/d/…">
       <label class="label" for="setGoal">Word goal</label>
       <input class="inp num" id="setGoal" type="number" min="1" inputmode="numeric" placeholder="80000">
+      <label class="label" for="setFinish">Finish by</label>
+      <input class="inp" id="setFinish" type="date" style="width:170px">
       <p class="meta" style="margin:0;font-size:13px;color:var(--muted)">Everything from a chapter titled Acknowledgements or Dark Matter onward is left out of the count.</p>
       <div class="row"><button class="btn teal" id="saveSet" type="button">Save</button><span id="setMsg" style="font-size:13px;color:var(--muted)"></span></div>
       <div class="subform">
@@ -324,6 +338,8 @@ body{padding-top:max(12px, env(safe-area-inset-top, 0px))}
           <input class="inp wide" id="addLink" type="url" placeholder="https://docs.google.com/document/d/…">
           <label class="label" for="addGoal">Word goal</label>
           <input class="inp num" id="addGoal" type="number" min="1" inputmode="numeric" placeholder="80000">
+          <label class="label" for="addFinish">Finish by (optional)</label>
+          <input class="inp" id="addFinish" type="date" style="width:170px">
           <p style="margin:0;font-size:13px;color:var(--muted)">The new book shows up with its own progress bar at the top. Its first word count is its starting point, so the words already in it never count as writing for that day.</p>
           <div class="row"><button class="btn teal" id="addSave" type="button">Add</button><button class="linkbtn" id="addCancel" type="button">Cancel</button><span id="addMsg" style="font-size:13px;color:var(--muted)"></span></div>
         </div>

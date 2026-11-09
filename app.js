@@ -46,7 +46,7 @@ function countWords(text){
 // data = { v, books:[{id,title,docId,link,goal}], activeId, booksAt,
 //          snapshots:{ docId:{ "YYYY-MM-DD":{count,at,m} } },   m = "api" (this app/nightly) or "import"
 //          sessions:{ id:{...} }, deleted:{ id:ts }, active:{...}|null, activeAt }
-function emptyData(){ return {v:1, books:[], activeId:null, booksAt:0, snapshots:{}, sessions:{}, deleted:{}, active:null, activeAt:0, goals:{}, daysOff:{}}; }
+function emptyData(){ return {v:1, books:[], activeId:null, booksAt:0, snapshots:{}, sessions:{}, deleted:{}, active:null, activeAt:0, goals:{}, daysOff:{}, weekGoals:{}}; }
 function merge(a, b){
   a = a || emptyData(); b = b || emptyData();
   const out = emptyData();
@@ -62,6 +62,9 @@ function merge(a, b){
   for (const src of [a, b]) for (const [did, m] of Object.entries(src.snapshots || {})) {
     const o = out.snapshots[did] || (out.snapshots[did] = {});
     for (const [d, s] of Object.entries(m)) { if (!o[d] || (s.at||0) > (o[d].at||0)) o[d] = s; }
+  }
+  for (const src of [a, b]) for (const [d, g] of Object.entries(src.weekGoals || {})) {
+    if (!out.weekGoals[d] || (g.at||0) > (out.weekGoals[d].at||0)) out.weekGoals[d] = g;
   }
   for (const src of [a, b]) for (const [d, o] of Object.entries(src.daysOff || {})) {
     if (!out.daysOff[d] || (o.at||0) > (out.daysOff[d].at||0)) out.daysOff[d] = o;
@@ -127,6 +130,24 @@ const OFF_ICON = {vacation:"🌴", sick:"🤒"};
 const OFF_CLS = {vacation:"vac", sick:"sick"};
 function offKind(d){ const o = (S.data.daysOff || {})[d]; return o && OFF_NAME[o.kind] ? o.kind : null; }
 function setOff(d, kind){ (S.data.daysOff || (S.data.daysOff = {}))[d] = {kind: kind || null, at: Date.now()}; save(); }
+// Days that count as writing days for planning: not Sundays, vacation or sick days.
+function isWritingDay(d){ return !isSun(d) && !offKind(d); }
+function writingDaysBetween(from, to){ let n = 0; for (let d = from; d <= to; d = addDays(d,1)) if (isWritingDay(d)) n++; return n; }
+function countBefore(did, d){ const ds = docDates(did).filter(x => x < d); return ds.length ? S.data.snapshots[did][ds[ds.length-1]].count : null; }
+// Finish-by plan for one book. The words-per-day figure is set from where the book stood when today began,
+// so it holds steady through the day and recalculates tomorrow from what you actually wrote.
+function finishPlan(b){
+  if (!b.finishBy) return null;
+  const t = todayStr(); const cur = latestCount(b.docId); const goal = Number(b.goal) || 80000;
+  if (cur == null) return {pending: true};
+  if (cur >= goal) return {finished: true};
+  if (b.finishBy < t) return {past: true, left: goal - cur};
+  const writeToday = isWritingDay(t);
+  const start = writeToday ? (countBefore(b.docId, t) ?? cur) : cur;
+  const days = writingDaysBetween(writeToday ? t : addDays(t, 1), b.finishBy);
+  if (days <= 0) return {noDays: true, left: goal - cur};
+  return {perDay: Math.ceil(Math.max(0, goal - start) / days), days, today: writeToday ? Math.max(0, cur - start) : null, left: goal - cur};
+}
 function sumRange(from, to){ let t = 0; for (let d = from; d <= to; d = addDays(d,1)) t += dayInfo(d).total; return t; }
 function streaks(){
   const today = todayStr();
@@ -314,7 +335,7 @@ function renderMs(){
     const c = S.counts[b.docId]; if (c && c.at > lastAt) lastAt = c.at;
     return '<div class="book'+(cur!=null && cur>=g?" done":"")+'" title="'+(cur!=null ? fmt(Math.max(0,g-cur))+' words to go' : '')+'"><span class="btitle">'+esc(b.title)+'</span>'+
       '<div class="gtrack" role="progressbar" aria-label="'+esc(b.title)+' progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(pct)+'"><div class="gfill" style="width:'+pct.toFixed(1)+'%"></div></div>'+
-      '<span class="bmeta num">'+(cur!=null ? '<b>'+fmt(cur)+'</b> / '+short(g)+' · '+(cur>=g ? "Done!" : Math.round(pct)+'%') : 'Goal '+short(g))+'</span></div>';
+      '<span class="bmeta num">'+(cur!=null ? '<b>'+fmt(cur)+'</b> / '+short(g)+' · '+(cur>=g ? "Done!" : Math.round(pct)+'%') : 'Goal '+short(g))+'</span>'+planLine(b)+'</div>';
   }).join("") : '<p style="margin:0;font-size:13px;color:var(--muted)">No books yet. Open Manuscript settings at the bottom and add your first book.</p>';
   $("booksWhen").textContent = S.syncing ? "Reading your docs…" : S.saving ? "Saving…" : lastAt ? "Updated "+new Date(lastAt).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}) : "";
   $("syncBtn").disabled = S.syncing || !Auth.token() || !bs.length;
@@ -323,6 +344,18 @@ function renderMs(){
   else n.hidden = true;
 }
 
+function planLine(b){
+  const p = finishPlan(b); if (!p) return "";
+  const by = parse(b.finishBy).toLocaleDateString("en-US", {month:"short", day:"numeric"});
+  let txt;
+  if (p.pending) txt = "Finish by "+by;
+  else if (p.finished) txt = "Finished! ♥";
+  else if (p.past) txt = "Finish date ("+by+") has passed · "+fmt(p.left)+" words to go";
+  else if (p.noDays) txt = "No writing days left before "+by+" · "+fmt(p.left)+" to go";
+  else txt = 'Finish by '+by+' · <b>'+fmt(p.perDay)+'</b> words a day · '+p.days+' writing '+(p.days === 1 ? "day" : "days")+' left'+
+    (p.today == null ? ' · rest day today' : ' · today <b class="'+(p.today >= p.perDay ? "hit" : "")+'">'+fmt(p.today)+'</b> / '+fmt(p.perDay)+(p.today >= p.perDay ? ' ✓' : ''));
+  return '<span class="bplan num">'+txt+'</span>';
+}
 let tick = null;
 function clock(ms){ const s = Math.max(0, Math.round(ms/1000)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60; return (h? h+":"+pad(m) : m)+":"+pad(x); }
 function renderSprint(){
@@ -658,7 +691,46 @@ function wireOffCal(){
   $("offNext").onclick = () => { S.offView = new Date(S.offView.getFullYear(), S.offView.getMonth()+1, 1); renderOffCal(); };
   $("calSettings").addEventListener("toggle", () => { if (!$("calSettings").open){ S.offMode = null; } renderOffCal(); });
 }
-function renderAll(){ renderGoal(); renderTotals(); renderMs(); renderSprint(); renderCal(); renderPanel(); renderTod(); fillSettings(); renderOffCal(); }
+// ---------------- weekly goal ----------------
+// Set once and it carries into later weeks until you change or remove it.
+const weekStart = d => addDays(d, -parse(d).getDay());
+function weekGoalFor(ws){
+  const g = S.data.weekGoals || {}; const k = Object.keys(g).filter(x => x <= ws).sort().pop();
+  const v = k && g[k]; return v && !v.cleared && v.target > 0 ? v : null;
+}
+function renderWeek(){
+  const box = $("weekBox"), btn = $("weekOpen"); const t = todayStr(); const ws = weekStart(t); const we = addDays(ws, 6);
+  const g = weekGoalFor(ws); const f = S.weekForm;
+  btn.hidden = !!g || !!f;
+  if (f){
+    box.innerHTML = '<div class="goalform wk"><div class="grow1"><span class="label">Weekly goal</span>'+
+      '<label class="glab" for="weekNum">Words a week</label><input class="inp num" id="weekNum" type="number" min="1" inputmode="numeric" placeholder="10000" value="'+esc(f.target)+'"></div>'+
+      '<div class="grow1"><button class="btn teal sm" id="weekSet" type="button">Set goal</button><button class="linkbtn" id="weekCancel" type="button">Cancel</button>'+
+      (g ? '<button class="linkbtn" id="weekRemove" type="button">Remove goal</button>' : '')+'</div>'+
+      '<p style="margin:0;font-size:12px;color:var(--muted)">Weeks run Sunday to Saturday. It stays set for the weeks after this one until you change it.</p></div>';
+    $("weekNum").oninput = e => { f.target = e.target.value; };
+    $("weekNum").onkeydown = e => { if (e.key === "Enter") $("weekSet").click(); };
+    $("weekSet").onclick = () => { const n = parseInt($("weekNum").value, 10); if (!n || n < 1){ $("weekNum").focus(); return; }
+      (S.data.weekGoals || (S.data.weekGoals = {}))[ws] = {target: n, at: Date.now()}; save(); S.weekForm = null; renderAll(); };
+    $("weekCancel").onclick = () => { S.weekForm = null; renderWeek(); };
+    const rm = $("weekRemove"); if (rm) rm.onclick = () => { (S.data.weekGoals || (S.data.weekGoals = {}))[ws] = {cleared: true, at: Date.now()}; save(); S.weekForm = null; renderAll(); };
+    return;
+  }
+  if (!g){ box.innerHTML = ""; return; }
+  const done = sumRange(ws, t); const met = done >= g.target; const pct = Math.min(100, done / g.target * 100);
+  const writeToday = isWritingDay(t);
+  const before = t > ws ? sumRange(ws, addDays(t, -1)) : 0;
+  const days = writingDaysBetween(writeToday ? t : addDays(t, 1), we);
+  const perDay = days > 0 ? Math.ceil(Math.max(0, g.target - (writeToday ? before : done)) / days) : 0;
+  const pace = met ? '' : days > 0 ? '<span class="dleft num">about '+fmt(perDay)+' a day for '+days+' more writing '+(days === 1 ? "day" : "days")+'</span>' : '<span class="dleft">no writing days left this week</span>';
+  box.innerHTML = '<div class="dgoal wk'+(met ? " met" : "")+'"><div class="dtop">'+
+    '<span class="dlabel">This week</span><span class="dnum num">'+fmt(done)+' / '+fmt(g.target)+' words</span>'+
+    (met ? '<span class="dmet">Week goal met! ♥</span>' : '<span class="dleft num">'+fmt(g.target - done)+' to go</span>')+pace+
+    '<span class="dact"><button class="linkbtn" id="weekEdit" type="button">Change</button></span></div>'+
+    '<div class="dtrack" role="progressbar" aria-label="Weekly goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(pct)+'"><div class="dfill" style="width:'+pct.toFixed(1)+'%"></div></div></div>';
+  $("weekEdit").onclick = () => { S.weekForm = {target: String(g.target)}; renderWeek(); };
+}
+function renderAll(){ renderWeek(); renderGoal(); renderTotals(); renderMs(); renderSprint(); renderCal(); renderPanel(); renderTod(); fillSettings(); renderOffCal(); }
 
 // ---------------- sessions ----------------
 async function startSession(type, durationMin){
@@ -711,7 +783,8 @@ function fillSettings(){
   if (document.activeElement && /^set/.test(document.activeElement.id)) return;
   $("bookPick").hidden = bs.length < 2;
   $("setBook").innerHTML = bs.map(b => '<option value="'+esc(b.id)+'"'+(a && b.id===a.id?" selected":"")+'>'+esc(b.title)+'</option>').join("");
-  [$("setTitle"), $("setLink"), $("setGoal"), $("saveSet")].forEach(el => el.disabled = !a);
+  [$("setTitle"), $("setLink"), $("setGoal"), $("setFinish"), $("saveSet")].forEach(el => el.disabled = !a);
+  $("setFinish").value = a && a.finishBy ? a.finishBy : "";
   $("setTitle").value = a ? a.title || "" : ""; $("setLink").value = a ? a.link || "" : ""; $("setGoal").value = a ? a.goal || "" : "";
   const em = lsGet("email"); const sv = S.savedAt || lsGet("savedAt");
   $("acctMsg").textContent = Auth.token() ? "Signed in to Google"+(em ? " as "+em : "")+" · "+(sv ? "last saved to Drive "+new Date(sv).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "not saved to Drive yet") : "Not signed in. Your log is only on this device until you sign in.";
@@ -723,7 +796,7 @@ function wireSettings(){
     const link = $("setLink").value.trim(); const id = link ? docIdFrom(link) : a.docId;
     if (!id){ $("setMsg").textContent = "That doesn't look like a Google Doc link."; return; }
     const goal = parseInt($("setGoal").value, 10); const changedDoc = id !== a.docId;
-    a.title = $("setTitle").value.trim() || a.title; a.link = link; a.docId = id; a.goal = goal > 0 ? goal : (a.goal || 80000);
+    a.title = $("setTitle").value.trim() || a.title; a.link = link; a.docId = id; a.goal = goal > 0 ? goal : (a.goal || 80000); a.finishBy = $("setFinish").value || null;
     S.data.booksAt = Date.now(); save(); $("setMsg").textContent = "Saved."; renderAll(); if (changedDoc) syncNow();
   };
   $("addOpen").onclick = () => { $("addForm").hidden = false; $("addOpen").hidden = true; $("addTitle").focus(); };
@@ -732,9 +805,9 @@ function wireSettings(){
     const title = $("addTitle").value.trim(); const id = docIdFrom($("addLink").value.trim()); const goal = parseInt($("addGoal").value, 10);
     if (!title){ $("addMsg").textContent = "Give the book a title."; return; }
     if (!id){ $("addMsg").textContent = "Paste the book's Google Doc link."; return; }
-    const nb = {id: uid("b"), title, docId: id, link: $("addLink").value.trim(), goal: goal > 0 ? goal : 80000};
+    const nb = {id: uid("b"), title, docId: id, link: $("addLink").value.trim(), goal: goal > 0 ? goal : 80000, finishBy: $("addFinish").value || null};
     S.data.books = books().concat([nb]); if (!S.data.activeId) S.data.activeId = nb.id; S.data.booksAt = Date.now();
-    save(); $("addForm").hidden = true; $("addOpen").hidden = false; ["addTitle","addLink","addGoal"].forEach(k => $(k).value = "");
+    save(); $("addForm").hidden = true; $("addOpen").hidden = false; ["addTitle","addLink","addGoal","addFinish"].forEach(k => $(k).value = "");
     $("addMsg").textContent = ""; $("setMsg").textContent = "Added "+title+"."; renderAll(); syncNow();
   };
   $("importFile").onchange = async e => {
@@ -757,6 +830,8 @@ function wireSettings(){
   $("nextM").onclick = () => { S.view = new Date(S.view.getFullYear(), S.view.getMonth()+1, 1); renderCal(); };
   $("syncBtn").onclick = () => syncNow();
   $("goalOpen").onclick = () => openGoalForm();
+  $("weekOpen").onclick = () => { const ws = weekStart(todayStr()); const k = Object.keys(S.data.weekGoals || {}).filter(x => x <= ws).sort().pop(); const prev = k && S.data.weekGoals[k];
+    S.weekForm = {target: prev && prev.target ? String(prev.target) : ""}; renderWeek(); const i = $("weekNum"); if (i){ i.focus(); i.select(); } };
 }
 
 // ---------------- boot ----------------
