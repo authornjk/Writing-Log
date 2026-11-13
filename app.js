@@ -385,7 +385,7 @@ function renderSprint(){
     wirePicker();
     $("spMin").oninput = e => { S.sprintMin = e.target.value; };
     $("spMin").onkeydown = e => { if (e.key === "Enter") $("spGo").click(); };
-    $("spGo").onclick = () => { const m = parseInt($("spMin").value || "25", 10); if (!m || m < 1) return; S.sprintMin = String(m); armAlarm(); startSession("sprint", m); };
+    $("spGo").onclick = () => { const m = parseInt($("spMin").value || "25", 10); if (!m || m < 1) return; S.sprintMin = String(m); S.tapAt = Date.now(); armAlarm(m*60000); startSession("sprint", m); };
     $("spBack").onclick = () => { S.picking = false; renderSprint(); };
     return;
   }
@@ -393,7 +393,7 @@ function renderSprint(){
   const st = new Date(sp.start).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
   const timeText = () => endAt ? (Date.now() < endAt ? clock(endAt - Date.now()) : "Time's up!") : clock(Date.now()-sp.start);
   const up = endAt && Date.now() >= endAt;
-  const alarmOff = endAt && !up && !alarm.ctx;
+  const alarmOff = endAt && !up && !alarm.el;
   c.innerHTML = picker + '<div class="sprint-row"><div style="flex:1;min-width:0"><span class="label">'+TYPE_NAME[sp.type]+(endAt? " · "+sp.durationMin+" min" : "")+'</span><div class="timer num" id="spTimer">'+timeText()+'</div></div>'+
       (S.ringing ? '<button class="btn" id="spHush" type="button">Silence alarm</button>' : '')+
       '<button class="btn primary" id="spStop" type="button"'+(S.busy?' disabled':'')+'>'+(S.busy?"Reading your doc…": up ? "Log sprint" : endAt ? "Stop early" : "Stop")+'</button></div>'+
@@ -403,60 +403,72 @@ function renderSprint(){
   $("spStop").onclick = stopSession;
   $("spCancel").onclick = cancelSession;
   const h = $("spHush"); if (h) h.onclick = () => silence();
-  const r = $("spRearm"); if (r) r.onclick = () => { armAlarm(); renderSprint(); };
+  const r = $("spRearm"); if (r) r.onclick = () => { armAlarm(endAt - Date.now()); renderSprint(); };
   const ms = $("spManualSave"); if (ms) ms.onclick = () => { const w = parseInt($("spManual").value,10); if (!isNaN(w)) finishSession(null, w); };
   const check = () => { const el = $("spTimer"); if (el) el.textContent = timeText();
-    if (endAt && Date.now() >= endAt && alarm.ctx && alarm.rungFor !== sp.start){ alarm.rungFor = sp.start; ring(); renderSprint(); } };
+    if (endAt && Date.now() >= endAt && alarm.el && alarm.rungFor !== sp.start){ alarm.rungFor = sp.start; ring(); renderSprint(); } };
   tick = setInterval(check, 500); setTimeout(check, 0);
 }
 
 // ---------------- alarm ----------------
-// The sound is unlocked when you tap Start (phones only allow sound after a tap), then played when the timer
-// reaches zero. "playback" lets it ring even when the phone's silent switch is on.
-const alarm = { ctx:null, lock:null, loop:null, rungFor:null };
-function armAlarm(){
+// When you tap Start, the app begins playing one sound file: silence for the length of the sprint, then the
+// chime. Because it's ordinary media playback (like a podcast), it keeps going with the screen locked or the
+// app in the background, and it plays with the silent switch on, the same way your phone's own alarms do.
+const alarm = { el:null, url:null, lock:null, rungFor:null, long:false, stopT:null };
+const ALARM_SECS = 60, WAV_RATE = 3200, LONG_LIMIT = 5400;
+function alarmWav(silenceSec, withChime){
+  const n = Math.round(silenceSec * WAV_RATE) + (withChime ? ALARM_SECS * WAV_RATE : 0) + WAV_RATE/4;
+  const buf = new ArrayBuffer(44 + n), v = new DataView(buf), s = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o+i, str.charCodeAt(i)); };
+  s(0,"RIFF"); v.setUint32(4, 36+n, true); s(8,"WAVE"); s(12,"fmt "); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24, WAV_RATE, true); v.setUint32(28, WAV_RATE, true); v.setUint16(32,1,true); v.setUint16(34,8,true); s(36,"data"); v.setUint32(40, n, true);
+  const bytes = new Uint8Array(buf, 44); bytes.fill(128);
+  if (withChime){
+    const start = Math.round(silenceSec * WAV_RATE);
+    for (let i = start; i < n; i++){
+      const tt = (i - start) / WAV_RATE; const ph = tt % 1.3; let x = 0;
+      if (ph < 0.5) x += Math.sin(2*Math.PI*880*tt) * Math.exp(-ph*6);
+      if (ph >= 0.16 && ph < 0.66) x += Math.sin(2*Math.PI*1318.5*tt) * Math.exp(-(ph-0.16)*6);
+      bytes[i] = Math.max(0, Math.min(255, Math.round(128 + 70*x)));
+    }
+  }
+  return new Blob([buf], {type: "audio/wav"});
+}
+function playBlob(blob, loop){
+  const el = alarm.el || new Audio(); alarm.el = el;
+  if (alarm.url) URL.revokeObjectURL(alarm.url);
+  alarm.url = URL.createObjectURL(blob); el.loop = !!loop; el.src = alarm.url; el.setAttribute("playsinline", "");
+  const p = el.play(); if (p && p.catch) p.catch(() => {});
+}
+function armAlarm(msLeft){
   silence(true);
   try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch(_){}
+  const sec = Math.max(0, (msLeft || 0) / 1000);
+  alarm.long = sec > LONG_LIMIT;
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC){
-      const ctx = new AC(); alarm.ctx = ctx; if (ctx.resume) ctx.resume();
-      const o = ctx.createOscillator(), g = ctx.createGain(); g.gain.value = 0.0001;
-      o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.05);
-    }
-  } catch(_){ alarm.ctx = null; }
+    // Very long sprints loop a short silent clip and switch to the chime at the end instead.
+    playBlob(alarm.long ? alarmWav(1, false) : alarmWav(sec, true), alarm.long);
+    if ("mediaSession" in navigator && window.MediaMetadata) navigator.mediaSession.metadata = new MediaMetadata({title: "Writing sprint", artist: "Writing Log"});
+  } catch(_){ alarm.el = null; }
   try { if (navigator.wakeLock) navigator.wakeLock.request("screen").then(l => { alarm.lock = l; }).catch(()=>{}); } catch(_){}
 }
 function ring(){
-  const ctx = alarm.ctx; if (!ctx) return;
-  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch(_){}
-  if (ctx.state !== "running" && ctx.resume) ctx.resume();
-  let n = 0;
-  const beep = () => {
-    try {
-      const t0 = ctx.currentTime + 0.03;
-      [[880,0],[1318.5,0.16]].forEach(([f,off]) => {
-        const o = ctx.createOscillator(), g = ctx.createGain(); const at = t0 + off;
-        o.type = "sine"; o.frequency.value = f; g.gain.setValueAtTime(0.0001, at);
-        g.gain.exponentialRampToValueAtTime(0.4, at+0.02); g.gain.exponentialRampToValueAtTime(0.0001, at+0.5);
-        o.connect(g); g.connect(ctx.destination); o.start(at); o.stop(at+0.55);
-      });
-    } catch(_){}
-    if (++n >= 45){ clearInterval(alarm.loop); alarm.loop = null; S.ringing = false; renderSprint(); }
-  };
-  clearInterval(alarm.loop); beep(); alarm.loop = setInterval(beep, 1300);
+  if (!alarm.el) return;
+  if (alarm.long){ alarm.long = false; playBlob(alarmWav(0, true), false); }
+  else if (alarm.el.paused){ const p = alarm.el.play(); if (p && p.catch) p.catch(() => {}); }
   S.ringing = true;
+  clearTimeout(alarm.stopT); alarm.stopT = setTimeout(() => { S.ringing = false; renderSprint(); }, ALARM_SECS * 1000);
 }
 function silence(quiet){
-  clearInterval(alarm.loop); alarm.loop = null;
-  if (alarm.ctx){ try { alarm.ctx.close(); } catch(_){} alarm.ctx = null; }
+  clearTimeout(alarm.stopT);
+  if (alarm.el){ try { alarm.el.pause(); alarm.el.removeAttribute("src"); alarm.el.load(); } catch(_){} alarm.el = null; }
+  if (alarm.url){ URL.revokeObjectURL(alarm.url); alarm.url = null; }
   if (alarm.lock){ try { alarm.lock.release(); } catch(_){} alarm.lock = null; }
   S.ringing = false; if (quiet !== true) renderSprint();
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible" || !alarm.ctx) return;
-  if (alarm.ctx.state !== "running" && alarm.ctx.resume) alarm.ctx.resume();
-  if (S.data.active && navigator.wakeLock && !alarm.loop) navigator.wakeLock.request("screen").then(l => { alarm.lock = l; }).catch(()=>{});
+  if (document.visibilityState !== "visible" || !alarm.el || !S.data.active) return;
+  if (alarm.el.paused && !alarm.el.ended){ const p = alarm.el.play(); if (p && p.catch) p.catch(() => {}); }
+  if (navigator.wakeLock) navigator.wakeLock.request("screen").then(l => { alarm.lock = l; }).catch(()=>{});
 });
 
 function renderCal(){
@@ -739,7 +751,7 @@ async function startSession(type, durationMin){
   S.busy = true; S.driveErr = null; renderSprint();
   try {
     const n = await readCount(ab.docId); recordToday(n, ab.docId);
-    S.data.active = {type, durationMin: durationMin || null, start: Date.now(), startCount: n, docId: ab.docId, bookId: ab.id, bookTitle: ab.title, timeOfDay: todFor(new Date())};
+    S.data.active = {type, durationMin: durationMin || null, start: type === "sprint" && S.tapAt && Date.now() - S.tapAt < 60000 ? S.tapAt : Date.now(), startCount: n, docId: ab.docId, bookId: ab.id, bookTitle: ab.title, timeOfDay: todFor(new Date())};
     S.data.activeAt = Date.now(); S.picking = false; save(true);
   } catch(e){ silence(true); if (e.code === "auth"){ lsSet("pendingStart", {type, durationMin: durationMin || null}); renew(); } else S.driveErr = docErr(e, ab); }
   S.busy = false; renderAll();
